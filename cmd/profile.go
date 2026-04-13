@@ -32,15 +32,20 @@ Default region can be set in config or with --region flag.`,
 func init() {
 	profileCmd.Flags().StringP("region", "r", "", "Server region (na1, euw1, kr, etc.)")
 	profileCmd.Flags().IntP("matches", "n", 5, "Number of recent matches to show (max 20)")
+	profileCmd.Flags().Bool("mock", false, "Use mock data for testing (no API key needed)")
 	rootCmd.AddCommand(profileCmd)
 }
 
 func runProfile(cmd *cobra.Command, args []string) {
+	useMock, _ := cmd.Flags().GetBool("mock")
+
 	key := viper.GetString("riot_api_key")
-	if key == "" {
+	if !useMock && key == "" {
 		internal.Error("No Riot API key configured.")
 		fmt.Fprintln(os.Stderr, "Get one at https://developer.riotgames.com/")
 		fmt.Fprintln(os.Stderr, "Then set it: fastlol config set riot_api_key <your-key>")
+		fmt.Fprintln(os.Stderr, "\nOr use --mock flag for testing with fake data:")
+		fmt.Fprintf(os.Stderr, "  fastlol profile %s --mock\n", args[0])
 		os.Exit(1)
 	}
 
@@ -49,7 +54,7 @@ func runProfile(cmd *cobra.Command, args []string) {
 		region = viper.GetString("default_region")
 	}
 	if region == "" {
-		region = "na1" // default fallback
+		region = "na1"
 	}
 	region = strings.ToLower(region)
 
@@ -61,50 +66,121 @@ func runProfile(cmd *cobra.Command, args []string) {
 		tagLine = args[1]
 	}
 
-	client := api.NewRiotClient(key)
-
-	// Fetch summoner
-	var summoner *api.Summoner
-	var err error
-
+	displayName := gameName
 	if tagLine != "" {
-		internal.Title(fmt.Sprintf("Looking up: %s#%s (%s)", gameName, tagLine, region))
-		summoner, err = client.GetSummonerByTag(region, gameName, tagLine)
+		displayName = fmt.Sprintf("%s#%s", gameName, tagLine)
+	}
+
+	var summoner *api.Summoner
+	var rankedStats []api.RankedInfo
+	var matches []api.MatchMetadata
+
+	if useMock {
+		internal.Title(fmt.Sprintf("[MOCK] Profile: %s (%s)", displayName, region))
+		summoner, rankedStats, matches = generateMockData(displayName, region, matchCount)
 	} else {
-		internal.Title(fmt.Sprintf("Looking up: %s (%s)", gameName, region))
-		// Try Riot ID format first (name with # in it)
-		if strings.Contains(gameName, "#") {
-			parts := strings.SplitN(gameName, "#", 2)
-			summoner, err = client.GetSummonerByTag(region, parts[0], parts[1])
+		client := api.NewRiotClient(key)
+
+		var err error
+		if tagLine != "" {
+			internal.Title(fmt.Sprintf("Looking up: %s#%s (%s)", gameName, tagLine, region))
+			summoner, err = client.GetSummonerByTag(region, gameName, tagLine)
 		} else {
-			// Fallback to legacy summoner name
-			summoner, err = client.GetSummonerByName(region, gameName)
+			internal.Title(fmt.Sprintf("Looking up: %s (%s)", gameName, region))
+			if strings.Contains(gameName, "#") {
+				parts := strings.SplitN(gameName, "#", 2)
+				summoner, err = client.GetSummonerByTag(region, parts[0], parts[1])
+			} else {
+				summoner, err = client.GetSummonerByName(region, gameName)
+			}
+		}
+
+		if err != nil {
+			internal.Error(fmt.Sprintf("Failed to find summoner: %v", err))
+			fmt.Fprintln(os.Stderr, "\nTip: Use 'Name#TAG' format for Riot IDs")
+			os.Exit(1)
+		}
+
+		rankedStats, _ = client.GetRankedStats(region, summoner.ID)
+		matchIDs, _ := client.GetRecentMatches(region, summoner.PUUID, matchCount)
+		for _, id := range matchIDs {
+			match, err := client.GetMatchInfo(region, id)
+			if err == nil {
+				meta := match.GetPlayerMatchMetadata(summoner.PUUID)
+				if meta != nil {
+					matches = append(matches, *meta)
+				}
+			}
 		}
 	}
 
-	if err != nil {
-		internal.Error(fmt.Sprintf("Failed to find summoner: %v", err))
-		fmt.Fprintln(os.Stderr, "\nTip: Use 'Name#TAG' format for Riot IDs")
-		fmt.Fprintln(os.Stderr, "Example: fastlol profile 'Faker' KR")
-		os.Exit(1)
-	}
-
-	// Display basic info
 	displaySummonerInfo(summoner)
-
-	// Fetch ranked stats
-	rankedStats, err := client.GetRankedStats(region, summoner.ID)
-	if err == nil && len(rankedStats) > 0 {
+	if len(rankedStats) > 0 {
 		displayRankedStats(rankedStats)
 	}
-
-	// Fetch recent matches
-	if matchCount > 0 {
-		matches, err := client.GetRecentMatches(region, summoner.PUUID, matchCount)
-		if err == nil && len(matches) > 0 {
-			displayRecentMatches(client, region, summoner.PUUID, matches)
-		}
+	if len(matches) > 0 {
+		displayRecentMatches(matches)
 	}
+}
+
+func generateMockData(name, region string, matchCount int) (*api.Summoner, []api.RankedInfo, []api.MatchMetadata) {
+	summoner := &api.Summoner{
+		ID:            "mock-id-12345",
+		AccountID:     "mock-account",
+		PUUID:         "mock-puuid-xxx",
+		Name:          name,
+		ProfileIconID: 29,
+		RevisionDate:  time.Now().UnixMilli(),
+		SummonerLevel: 342,
+	}
+
+	ranked := []api.RankedInfo{
+		{
+			QueueType:    "RANKED_SOLO_5x5",
+			Tier:         "DIAMOND",
+			Rank:         "IV",
+			LeaguePoints: 67,
+			Wins:         145,
+			Losses:       132,
+			HotStreak:    true,
+		},
+		{
+			QueueType:    "RANKED_FLEX_SR",
+			Tier:         "PLATINUM",
+			Rank:         "II",
+			LeaguePoints: 45,
+			Wins:         89,
+			Losses:       76,
+			HotStreak:    false,
+		},
+	}
+
+	champions := []string{"Ahri", "Yasuo", "Lee Sin", "Jinx", "Thresh", "Zed", "Viego", "Kaisa"}
+	modes := []string{"CLASSIC", "ARAM", "URF"}
+
+	var matches []api.MatchMetadata
+	now := time.Now()
+	for i := 0; i < matchCount && i < len(champions); i++ {
+		win := i%3 != 0 // 2/3 win rate
+		kills := 5 + i*2
+		deaths := 3 + i%4
+		assists := 8 + i
+
+		matches = append(matches, api.MatchMetadata{
+			MatchID:       fmt.Sprintf("MOCK_%d", i),
+			GameCreation:  now.Add(-time.Duration(i*2) * time.Hour).UnixMilli(),
+			GameDuration:  1800 + i*120,
+			GameMode:      modes[i%len(modes)],
+			GameType:      "MATCHED_GAME",
+			Win:           win,
+			ChampionName:  champions[i%len(champions)],
+			Kills:         kills,
+			Deaths:        deaths,
+			Assists:       assists,
+		})
+	}
+
+	return summoner, ranked, matches
 }
 
 func displaySummonerInfo(s *api.Summoner) {
@@ -161,29 +237,17 @@ func displayRankedStats(stats []api.RankedInfo) {
 	fmt.Println()
 }
 
-func displayRecentMatches(client *api.RiotClient, region, puuid string, matchIDs []string) {
+func displayRecentMatches(matches []api.MatchMetadata) {
 	fmt.Println("\033[1m  Recent Matches:\033[0m")
 	fmt.Println()
 
 	headers := []string{"Time", "Mode", "Champion", "KDA", "Result", "Duration"}
 	var rows [][]string
 
-	for _, matchID := range matchIDs {
-		match, err := client.GetMatchInfo(region, matchID)
-		if err != nil {
-			continue
-		}
-
-		meta := match.GetPlayerMatchMetadata(puuid)
-		if meta == nil {
-			continue
-		}
-
-		// Format timestamp
+	for _, meta := range matches {
 		t := time.UnixMilli(meta.GameCreation)
 		timeStr := t.Format("01/02 15:04")
 
-		// Format KDA
 		kda := fmt.Sprintf("%d/%d/%d", meta.Kills, meta.Deaths, meta.Assists)
 		if meta.Deaths == 0 {
 			if meta.Kills+meta.Assists > 0 {
@@ -194,13 +258,11 @@ func displayRecentMatches(client *api.RiotClient, region, puuid string, matchIDs
 			kda += fmt.Sprintf(" (%.2f)", ratio)
 		}
 
-		// Format result
 		result := "\033[31mLoss\033[0m"
 		if meta.Win {
 			result = "\033[32mWin\033[0m"
 		}
 
-		// Format duration
 		duration := api.FormatDuration(meta.GameDuration)
 
 		rows = append(rows, []string{

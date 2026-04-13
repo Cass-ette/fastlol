@@ -118,6 +118,22 @@ type MatchMetadata struct {
 	Assists       int    `json:"assists"`
 }
 
+// FormatDuration converts seconds to mm:ss format
+func FormatDuration(seconds int) string {
+	m := seconds / 60
+	s := seconds % 60
+	return fmt.Sprintf("%d:%02d", m, s)
+}
+
+// WinRate calculates win rate percentage
+func WinRate(wins, losses int) float64 {
+	total := wins + losses
+	if total == 0 {
+		return 0
+	}
+	return float64(wins) / float64(total) * 100
+}
+
 // GetSummonerByName fetches summoner info by name (deprecated in API v5 but still works for some regions)
 func (c *RiotClient) GetSummonerByName(region, name string) (*Summoner, error) {
 	encodedName := url.QueryEscape(name)
@@ -273,20 +289,4 @@ func (m *MatchInfo) GetPlayerMatchMetadata(puuid string) *MatchMetadata {
 		}
 	}
 	return nil
-}
-
-// FormatDuration converts seconds to mm:ss format
-func FormatDuration(seconds int) string {
-	m := seconds / 60
-	s := seconds % 60
-	return fmt.Sprintf("%d:%02d", m, s)
-}
-
-// WinRate calculates win rate percentage
-func WinRate(wins, losses int) float64 {
-	total := wins + losses
-	if total == 0 {
-		return 0
-	}
-	return float64(wins) / float64(total) * 100
 }
