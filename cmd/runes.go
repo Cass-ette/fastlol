@@ -74,34 +74,91 @@ func displayRunes(data *api.RuneData) {
 		fmt.Printf("  %s: %.1f%%\n", i18n.T("runes.pick_rate"), data.PickRate*100)
 	}
 	if data.SampleSize > 0 {
-		fmt.Printf("  %s: %d\n", i18n.T("runes.sample"), data.SampleSize)
+		fmt.Printf("  %s: %d", i18n.T("runes.sample"), data.SampleSize)
+		if data.SampleSize < 500 {
+			fmt.Printf(" \033[33m(样本较少)\033[0m")
+		}
+		fmt.Println()
 	}
 
 	// Show primary rune tree
 	if data.PrimaryTree != "" {
-		fmt.Printf("\n  \033[1m%s:\033[0m %s\n", i18n.T("runes.primary"), data.PrimaryTree)
+		fmt.Printf("\n  \033[1m主系:\033[0m %s\n", data.PrimaryTree)
 		if data.Keystone.Name != "" {
 			fmt.Printf("    ⚡ %s\n", data.Keystone.Name)
 		}
 		for _, rune := range data.PrimaryRunes {
-			fmt.Printf("    • %s\n", rune.Name)
+			if rune.Name != "" {
+				fmt.Printf("    • %s\n", rune.Name)
+			}
 		}
 	}
 
 	// Show secondary rune tree
 	if data.SecondaryTree != "" {
-		fmt.Printf("\n  \033[1m%s:\033[0m %s\n", i18n.T("runes.secondary"), data.SecondaryTree)
+		fmt.Printf("\n  \033[1m副系:\033[0m %s\n", data.SecondaryTree)
 		for _, rune := range data.SecondaryRunes {
-			fmt.Printf("    • %s\n", rune.Name)
+			if rune.Name != "" {
+				fmt.Printf("    • %s\n", rune.Name)
+			}
 		}
 	}
 
 	// Show shards
 	if len(data.Shards) > 0 {
-		fmt.Printf("\n  \033[1m%s:\033[0m\n", i18n.T("runes.shards"))
-		for _, shard := range data.Shards {
-			fmt.Printf("    • %s\n", shard)
+		fmt.Printf("\n  \033[1m属性碎片:\033[0m\n    ")
+		for i, shard := range data.Shards {
+			if i > 0 {
+				fmt.Printf(" | ")
+			}
+			fmt.Printf("%s", shard)
 		}
+		fmt.Println()
+	}
+
+	// Show starting items
+	if len(data.StartingItems) > 0 {
+		fmt.Printf("\n  \033[1m出门装:\033[0m\n    ")
+		for i, item := range data.StartingItems {
+			if i > 0 {
+				fmt.Printf(" → ")
+			}
+			if item.Name != "" {
+				fmt.Printf("%s", item.Name)
+			} else {
+				fmt.Printf("物品%d", item.ID)
+			}
+		}
+		fmt.Println()
+	}
+
+	// Show core items
+	if len(data.CoreItems) > 0 {
+		fmt.Printf("\n  \033[1m核心装备:\033[0m\n    ")
+		for i, item := range data.CoreItems {
+			if i > 0 {
+				fmt.Printf(" → ")
+			}
+			if item.Name != "" {
+				fmt.Printf("%s", item.Name)
+			} else {
+				fmt.Printf("物品%d", item.ID)
+			}
+		}
+		fmt.Println()
+	}
+
+	// Show skill order
+	if len(data.SkillOrder) >= 6 {
+		fmt.Printf("\n  \033[1m技能加点:\033[0m\n    ")
+		// Show first 6 skill choices (early game priority)
+		for i := 0; i < 6 && i < len(data.SkillOrder); i++ {
+			if i > 0 {
+				fmt.Printf(" → ")
+			}
+			fmt.Printf("%s", data.SkillOrder[i])
+		}
+		fmt.Println()
 	}
 
 	// If no detailed rune data available

@@ -601,7 +601,7 @@ func getChampionNameByID(id string) string {
 	return "Champion " + id
 }
 
-// RuneData represents recommended runes for a champion
+// RuneData represents recommended runes, items, and skills for a champion
 type RuneData struct {
 	Champion      string       `json:"champion"`
 	Role          string       `json:"role"`
@@ -611,6 +611,9 @@ type RuneData struct {
 	PrimaryRunes  []RuneInfo   `json:"primary_runes"`
 	SecondaryRunes []RuneInfo `json:"secondary_runes"`
 	Shards        []string     `json:"shards"`
+	StartingItems []ItemInfo `json:"starting_items"`
+	CoreItems     []ItemInfo `json:"core_items"`
+	SkillOrder    []string     `json:"skill_order"`
 	WinRate       float64      `json:"win_rate"`
 	PickRate      float64      `json:"pick_rate"`
 	SampleSize    int          `json:"sample_size"`
@@ -620,7 +623,11 @@ type RuneData struct {
 type RuneInfo struct {
 	Name string `json:"name"`
 	ID   int    `json:"id"`
-	Slot int    `json:"slot"`
+}
+
+type ItemInfo struct {
+	Name string `json:"name"`
+	ID   int    `json:"id"`
 }
 
 // formatChampionName converts internal names (e.g., "xinzhao") to display names ("Xin Zhao")
@@ -856,6 +863,57 @@ var runeNames = map[int]string{
 	// Stats Shards (格式为字符串)
 	5005: "+10%攻速", 5007: "+10%冷却", 5008: "+9适应之力",
 	5001: "+15-90生命", 5002: "+6护甲", 5003: "+8魔抗",
+	// Missing runes
+	8017: "切割", 8105: "赏金猎人",
+}
+
+// Common item names mapping
+var itemNames = map[int]string{
+	// Starting items
+	1054: "多兰之盾", 1055: "多兰之刃", 1056: "多兰之戒",
+	2003: "生命药水", 2031: "腐蚀药水", 2033: "复用型药水",
+	2055: "控制守卫", 1101: "冰雹刀刃", 1102: "灰烬小刀",
+	// Boots
+	3006: "狂战士胫甲", 3009: "轻灵之靴", 3020: "法师之靴",
+	3047: "忍者足具", 3111: "水银之靴", 3117: "疾行之靴",
+	3158: "明朗之靴", 3005: "铁板靴",
+	// Mythic/Legendary items (common)
+	2510: "裂隙制造者",
+	3078: "三相之力", 6632: "神圣分离者", 6662: "冰霜护手",
+	3153: "破败王者之刃", 3142: "幽梦之灵", 6691: "德拉克斯的暮刃",
+	6692: "星蚀", 6676: "海妖杀手", 6673: "不朽盾弓",
+	3074: "贪欲九头蛇", 3748: "巨型九头蛇", 6333: "死亡之舞",
+	3026: "守护天使", 3033: "凡性的提醒", 3036: "领主的致意",
+	3046: "幻影之舞", 3085: "疾射火炮", 3094: "疾射火炮",
+	3115: "纳什之牙", 3100: "巫妖之祸", 3157: "中娅沙漏",
+	3165: "莫雷洛秘典", 3135: "虚空之杖", 3089: "灭世者的死亡之帽",
+	3116: "瑞莱的冰晶节杖", 3001: "深渊面具", 3065: "振奋盔甲",
+	3075: "荆棘之甲", 3143: "兰顿之兆", 3068: "日炎圣盾",
+	3193: "石像鬼石板甲", 3109: "骑士之誓", 3050: "天顶锋刃",
+	3084: "狂徒铠甲", 6617: "流水法杖", 4629: "炼金科技纯化器",
+	4645: "视界专注", 3003: "大天使之杖", 3027: "时光之杖",
+	3031: "无尽之刃", 3032: "疾射火炮", 3035: "最后的轻语",
+	3053: "斯特拉克的挑战护手", 3066: "黑色切割者", 3071: "黑色切割者",
+	3072: "饮血剑", 3077: "提亚马特", 3083: "狂徒铠甲",
+	3087: "斯塔缇克电刃", 3091: "智慧末刃", 3095: "疾射火炮",
+	3102: "女妖面纱", 3107: "救赎", 3110: "冰霜之心",
+	3112: "冰霜之牙", 3113: "艾希的霜火护手", 3114: "炽热香炉",
+	3119: "寒冬之握", 3124: "血色之刃", 3128: "灭世者的死亡之帽",
+	3133: "考尔菲德的战锤", 3134: "锯齿短匕", 3139: "水银弯刀",
+	3140: "水银饰带", 3144: "吸血鬼节杖", 3145: "海克斯科技枪",
+	3146: "海克斯科技枪刃", 3147: "德拉克萨的暮刃", 3152: "海克斯科技火箭腰带",
+	3155: "饮魔刀", 3156: "玛莫提乌斯之噬", 3161: "破舰者",
+	3177: "死刑宣告", 3179: "暗影阔剑", 3181: "收集者",
+	3184: "血色之刃", 3190: "钢铁烈阳之匣", 4005: "月石再生器",
+	4401: "自然之力", 4403: "灭世者的死亡之帽", 4628: "炼金科技纯化器",
+	4630: "流水法杖", 4633: "中娅沙漏", 4636: "暗夜收割者",
+	4637: "恶魔之拥", 4638: "视界专注", 4643: "星界驱驰",
+	4644: "影焰", 4646: "虚空之杖", 6035: "巨蛇之牙",
+	6660: "日炎圣盾", 6664: "涡轮炼金罐",
+	6665: "炼金科技纯化器", 6667: "石像鬼石板甲", 6670: "海妖杀手",
+	6671: "不朽盾弓", 6672: "狂风之力", 6675: "暗夜收割者",
+	6693: "德拉克萨的暮刃", 6694: "星蚀", 6695: "赛瑞尔达的怨恨",
+	6696: "梦想海域", 7000: "灭世者的死亡之帽",
 }
 
 func (s *UGGScraper) parseRunesFromData(data map[string]interface{}, champion, role string) (*RuneData, error) {
@@ -912,59 +970,60 @@ func (s *UGGScraper) parseRunesFromData(data map[string]interface{}, champion, r
 		return nil, fmt.Errorf("no rune build data found")
 	}
 
-	// First element is an array of build data
-	// runeBuildWrapper[0] = [[48, 35, 8000, 8300, [runes...]], [...], ...]
-	outerArray, ok := runeBuildWrapper[0].([]interface{})
-	if !ok || len(outerArray) == 0 {
-		return nil, fmt.Errorf("invalid rune wrapper structure")
+	// runeBuildWrapper is a list of builds, each build is an array
+	// Find the build with most games (sample size)
+	var bestBuild []interface{}
+	maxGames := 0.0
+
+	for _, item := range runeBuildWrapper {
+		buildData, ok := item.([]interface{})
+		if !ok || len(buildData) < 5 {
+			continue
+		}
+		// First element of build is [games, wins, ...]
+		firstElem, ok := buildData[0].([]interface{})
+		if !ok || len(firstElem) < 2 {
+			continue
+		}
+		// First two values: [0]=games, [1]=wins
+		if games, ok := firstElem[0].(float64); ok && games > maxGames {
+			maxGames = games
+			bestBuild = buildData
+		}
 	}
 
-	// Get the actual rune build data: [48, 35, 8000, 8300, [runes...]]
-	runeBuildData, ok := outerArray[0].([]interface{})
-	if !ok || len(runeBuildData) < 5 {
+	if bestBuild == nil {
+		return nil, fmt.Errorf("no valid rune build found")
+	}
+
+	// Use the best build (most games)
+	// bestBuild = [[games, wins, primary, secondary, [runes...]], [item1], [item2], [skill], ...]
+
+	// Extract rune data from index 0
+	runeDataArray, ok := bestBuild[0].([]interface{})
+	if !ok || len(runeDataArray) < 5 {
 		return nil, fmt.Errorf("invalid rune data structure")
 	}
 
-	// Extract win/pick stats
-	// Structure might be [games, wins, ...] or [wins, games, ...]
-	// Try both interpretations and pick the reasonable one (< 1.0)
-	if val0, ok0 := runeBuildData[0].(float64); ok0 {
-		if val1, ok1 := runeBuildData[1].(float64); ok1 && val1 > 0 {
-			// Try val0/val1 (wins/games)
-			wr1 := val0 / val1
-			// Try val1/val0 (games/wins -> wrong but check which makes sense)
-			wr2 := val1 / val0
-			// Pick the one that's <= 1.0 (100%)
-			if wr1 <= 1.0 && wr1 > 0 {
-				runeData.WinRate = wr1
-				runeData.SampleSize = int(val1)
-			} else if wr2 <= 1.0 && wr2 > 0 {
-				runeData.WinRate = wr2
-				runeData.SampleSize = int(val0)
-			} else {
-				// Fallback: assume larger value is games
-				if val0 > val1 {
-					runeData.WinRate = val1 / val0
-					runeData.SampleSize = int(val0)
-				} else {
-					runeData.WinRate = val0 / val1
-					runeData.SampleSize = int(val1)
-				}
-			}
+	// Extract win/pick stats - U.GG uses [games, wins, ...]
+	if games, ok := runeDataArray[0].(float64); ok {
+		if wins, ok := runeDataArray[1].(float64); ok && games > 0 {
+			runeData.WinRate = wins / games
+			runeData.SampleSize = int(games)
 		}
 	}
 
 	// Extract rune tree IDs
-	if primaryTreeID, ok := runeBuildData[2].(float64); ok {
+	if primaryTreeID, ok := runeDataArray[2].(float64); ok {
 		runeData.PrimaryTree = runeTreeNames[int(primaryTreeID)]
 	}
-	if secondaryTreeID, ok := runeBuildData[3].(float64); ok {
+	if secondaryTreeID, ok := runeDataArray[3].(float64); ok {
 		runeData.SecondaryTree = runeTreeNames[int(secondaryTreeID)]
 	}
 
 	// Extract rune array
 	// Structure: [keystone, primary1, primary2, primary3, secondary1, secondary2, ...]
-	if runeArray, ok := runeBuildData[4].([]interface{}); ok && len(runeArray) >= 4 {
+	if runeArray, ok := runeDataArray[4].([]interface{}); ok && len(runeArray) >= 4 {
 		// First rune is keystone
 		if keystoneID, ok := runeArray[0].(float64); ok {
 			runeData.Keystone = RuneInfo{
@@ -992,16 +1051,70 @@ func (s *UGGScraper) parseRunesFromData(data map[string]interface{}, champion, r
 		}
 	}
 
-	// Extract shards from different position in data
-	// Shards are usually near the end of the array
-	if len(runeBuildData) >= 12 {
-		// Look for shard array around index 11
-		if shardData, ok := runeBuildData[11].([]interface{}); ok {
-			if len(shardData) >= 3 {
-				if shards, ok := shardData[2].([]interface{}); ok {
-					for _, s := range shards {
-						if shard, ok := s.(string); ok {
-							runeData.Shards = append(runeData.Shards, shard)
+	// Extract starting items from index 2
+	// Structure: [wins, games, [itemIDs...]]
+	if len(bestBuild) > 2 {
+		if itemData, ok := bestBuild[2].([]interface{}); ok && len(itemData) >= 3 {
+			if itemIDs, ok := itemData[2].([]interface{}); ok {
+				for _, id := range itemIDs {
+					if itemID, ok := id.(float64); ok {
+						runeData.StartingItems = append(runeData.StartingItems, ItemInfo{
+							Name: itemNames[int(itemID)],
+							ID:   int(itemID),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Extract core items from index 3
+	if len(bestBuild) > 3 {
+		if itemData, ok := bestBuild[3].([]interface{}); ok && len(itemData) >= 3 {
+			if itemIDs, ok := itemData[2].([]interface{}); ok {
+				for _, id := range itemIDs {
+					if itemID, ok := id.(float64); ok {
+						runeData.CoreItems = append(runeData.CoreItems, ItemInfo{
+							Name: itemNames[int(itemID)],
+							ID:   int(itemID),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Extract skill order from index 4
+	if len(bestBuild) > 4 {
+		if skillData, ok := bestBuild[4].([]interface{}); ok && len(skillData) >= 3 {
+			if skills, ok := skillData[2].([]interface{}); ok {
+				for _, s := range skills {
+					if skill, ok := s.(string); ok {
+						runeData.SkillOrder = append(runeData.SkillOrder, skill)
+					}
+				}
+			}
+		}
+	}
+
+	// Extract shards from index 8 (if available)
+	// Shards are numeric IDs like 5008, need to convert to int and look up name
+	if len(bestBuild) > 8 {
+		if shardData, ok := bestBuild[8].([]interface{}); ok && len(shardData) >= 3 {
+			if shards, ok := shardData[2].([]interface{}); ok {
+				for _, s := range shards {
+					// Shards can be float64 (from JSON numbers) or string
+					var shardID int
+					if f, ok := s.(float64); ok {
+						shardID = int(f)
+					} else if str, ok := s.(string); ok {
+						shardID, _ = strconv.Atoi(str)
+					}
+					if shardID > 0 {
+						if name, ok := runeNames[shardID]; ok {
+							runeData.Shards = append(runeData.Shards, name)
+						} else {
+							runeData.Shards = append(runeData.Shards, fmt.Sprintf("[%d]", shardID))
 						}
 					}
 				}
