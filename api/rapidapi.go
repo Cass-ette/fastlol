@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -35,6 +36,7 @@ func (c *Client) doRequest(path string) ([]byte, error) {
 	}
 	req.Header.Set("x-rapidapi-host", rapidAPIHost)
 	req.Header.Set("x-rapidapi-key", c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -109,6 +111,20 @@ func (c *Client) GetRanking() ([]ChampionRanking, error) {
 func (c *Client) GetChampionStat(championName string) (json.RawMessage, error) {
 	name := strings.ToLower(strings.ReplaceAll(championName, " ", ""))
 	data, err := c.doRequest("/champ_stat/" + name)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// GetCounterStat fetches counter stats via the /counter_stat endpoint
+func (c *Client) GetCounterStat(championName, role string) (json.RawMessage, error) {
+	params := url.Values{}
+	params.Set("name", championName)
+	if role != "" {
+		params.Set("role", strings.ToLower(role))
+	}
+	data, err := c.doRequest("/counter_stat?" + params.Encode())
 	if err != nil {
 		return nil, err
 	}

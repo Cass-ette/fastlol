@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"fastlol/api"
 	"fastlol/internal"
+	"fastlol/internal/i18n"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -14,12 +16,19 @@ import (
 
 var tierCmd = &cobra.Command{
 	Use:   "tier",
-	Short: "Show current patch tier list",
+	Short: "Show current patch tier list for all champions",
+	Long: `Show champion tier rankings for the current patch (requires RapidAPI key).
+
+Examples:
+  fastlol tier
+  fastlol tier --role mid
+  fastlol tier --role top -n 10
+`,
 	Run:   runTier,
 }
 
 func init() {
-	tierCmd.Flags().StringP("role", "r", "", "Filter by role (top/jg/mid/adc/sup)")
+	tierCmd.Flags().StringP("role", "r", "", "Filter by role (top, jg, mid, adc, sup)")
 	tierCmd.Flags().IntP("limit", "n", 20, "Number of champions to show")
 	rootCmd.AddCommand(tierCmd)
 }
@@ -27,8 +36,8 @@ func init() {
 func runTier(cmd *cobra.Command, args []string) {
 	key := viper.GetString("rapidapi_key")
 	if key == "" {
-		internal.Error("No RapidAPI key configured.")
-		fmt.Fprintln(os.Stderr, "Set it in ~/.fastlol/config.yaml or pass --rapidapi-key")
+		internal.Error(i18n.T("error.no_rapid_key"))
+		fmt.Fprintln(os.Stderr, fmt.Sprintf(i18n.T("error.set_key_hint"), "rapidapi_key"))
 		os.Exit(1)
 	}
 
@@ -36,11 +45,11 @@ func runTier(cmd *cobra.Command, args []string) {
 	limit, _ := cmd.Flags().GetInt("limit")
 	client := api.NewClient(key)
 
-	internal.Title("Tier List — Current Patch")
+	internal.Title(i18n.T("tier.title"))
 
 	rankings, err := client.GetRanking()
 	if err != nil {
-		internal.Error(fmt.Sprintf("Failed to fetch tier data: %v", err))
+		internal.Error(fmt.Sprintf(i18n.T("error.fetch_failed"), err))
 		os.Exit(1)
 	}
 
@@ -64,7 +73,7 @@ func runTier(cmd *cobra.Command, args []string) {
 		}
 		rankings = filtered
 		if len(rankings) == 0 {
-			internal.Warn(fmt.Sprintf("No champions found for role: %s", role))
+			internal.Warn(fmt.Sprintf(i18n.T("tier.no_data"), role))
 			return
 		}
 	}
@@ -78,7 +87,8 @@ func runTier(cmd *cobra.Command, args []string) {
 		rankings = rankings[:limit]
 	}
 
-	headers := []string{"#", "Champion", "Tier", "Role", "Win Rate", "Pick Rate", "Ban Rate"}
+	headersStr := i18n.T("tier.headers")
+	headers := strings.Split(headersStr, ",")
 	var rows [][]string
 	for i, r := range rankings {
 		wr := internal.WinRateColorPct(r.WinRate)

@@ -12,6 +12,7 @@ import (
 
 	"fastlol/api"
 	"fastlol/internal"
+	"fastlol/internal/i18n"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -39,7 +40,6 @@ func getChampionName(id int) string {
 }
 
 func fetchChampionNames() (map[int]string, error) {
-	// Use latest patch version
 	url := "https://ddragon.leagueoflegends.com/cdn/16.7.1/data/en_US/champion.json"
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, _ := http.NewRequest("GET", url, nil)
@@ -76,29 +76,19 @@ func fetchChampionNames() (map[int]string, error) {
 }
 
 var profileCmd = &cobra.Command{
-	Use:   "profile [选手名] [TAG]",
-	Short: "查询召唤师战绩（英雄成就 + 近期比赛）",
-	Long: `查询召唤师战绩
-
-用法示例:
-  fastlol profile "Caps" EUW --region euw1 --matches 3
-  fastlol profile "Bin" KR1 --region kr
-  fastlol profile "Hide on bush" KR --region kr
-  fastlol profile "ON" KR1 --region kr --mastery 3
-
-Riot ID 格式: 名字#TAG
-常见区域: kr(韩服) euw1(欧服) na1(美服)
-`,
-	Args: cobra.RangeArgs(1, 2),
-	Run:  runProfile,
+	Use:   "profile [name] [tag]",
+	Short: "View summoner profile (mastery + recent matches)",
+	Long:  "View a summoner's champion mastery and recent match history.",
+	Args:  cobra.RangeArgs(1, 2),
+	Run:   runProfile,
 }
 
 func init() {
-	profileCmd.Flags().StringP("region", "r", "", "服务器区域 (kr, euw1, na1, cn1)")
-	profileCmd.Flags().IntP("matches", "n", 5, "显示近期比赛数量")
-	profileCmd.Flags().IntP("mastery", "m", 5, "显示英雄成就数量")
-	profileCmd.Flags().Int("expand", 0, "展开第 N 场详情（队友/对手 ID）")
-	profileCmd.Flags().Bool("mock", false, "使用模拟数据（无需 API key）")
+	profileCmd.Flags().StringP("region", "r", "", "Server region (e.g. kr, na1, euw1)")
+	profileCmd.Flags().IntP("matches", "n", 5, "Number of recent matches to show")
+	profileCmd.Flags().IntP("mastery", "m", 5, "Number of top champions to show")
+	profileCmd.Flags().Int("expand", 0, "Expand a specific match by number")
+	profileCmd.Flags().Bool("mock", false, "Use mock data for testing")
 	rootCmd.AddCommand(profileCmd)
 }
 
@@ -107,14 +97,14 @@ func runProfile(cmd *cobra.Command, args []string) {
 
 	key := viper.GetString("riot_api_key")
 	if !useMock && key == "" {
-		internal.Error("未配置 Riot API key")
+		internal.Error(i18n.T("error.no_riot_key"))
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "配置方法:")
-		fmt.Fprintln(os.Stderr, "  1. 访问 https://developer.riotgames.com/")
-		fmt.Fprintln(os.Stderr, "  2. 获取 Development API Key")
-		fmt.Fprintln(os.Stderr, "  3. fastlol config set riot_api_key <你的key>")
+		fmt.Fprintln(os.Stderr, "Setup:")
+		fmt.Fprintln(os.Stderr, "  1. Visit https://developer.riotgames.com/")
+		fmt.Fprintln(os.Stderr, "  2. Get a Development API Key")
+		fmt.Fprintln(os.Stderr, fmt.Sprintf(i18n.T("error.set_key_hint"), "riot_api_key"))
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "或使用模拟数据测试:")
+		fmt.Fprintln(os.Stderr, "Or use mock data:")
 		fmt.Fprintf(os.Stderr, "  fastlol profile %s --mock\n", args[0])
 		os.Exit(1)
 	}
@@ -136,8 +126,6 @@ func runProfile(cmd *cobra.Command, args []string) {
 	if len(args) >= 2 {
 		tagLine = args[1]
 	}
-
-	// Handle Riot ID format with #
 	if tagLine == "" && strings.Contains(gameName, "#") {
 		parts := strings.SplitN(gameName, "#", 2)
 		gameName = parts[0]
@@ -150,28 +138,24 @@ func runProfile(cmd *cobra.Command, args []string) {
 	}
 
 	if useMock {
-		internal.Title(fmt.Sprintf("[模拟数据] %s (%s)", displayName, region))
+		internal.Title(fmt.Sprintf("[Mock] %s (%s)", displayName, region))
 		runMockProfile(displayName, region, matchCount, masteryCount)
 		return
 	}
 
 	client := api.NewRiotClient(key)
-	internal.Title(fmt.Sprintf("🔍 正在查询: %s (%s)", displayName, region))
+	internal.Title(fmt.Sprintf(i18n.T("profile.title.real"), displayName, region))
 
 	account, err := client.GetAccountByTag(region, gameName, tagLine)
 	if err != nil {
-		internal.Error(fmt.Sprintf("未找到该召唤师: %v", err))
+		internal.Error(fmt.Sprintf(i18n.T("error.not_found"), err))
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "💡 常见问题:")
-		fmt.Fprintln(os.Stderr, "   - 请确认格式: fastlol profile \"名字\" TAG")
-		fmt.Fprintln(os.Stderr, "   - 示例: fastlol profile \"Caps\" EUW --region euw1")
-		fmt.Fprintln(os.Stderr, "   - 如果账号设置了隐私保护，部分数据可能无法获取")
+		fmt.Fprintln(os.Stderr, "Tip: Use format fastlol profile \"Name\" TAG --region xx")
 		os.Exit(1)
 	}
 
 	displayAccountInfo(account)
 
-	// Champion mastery
 	if masteryCount > 0 {
 		masteries, err := client.GetChampionMastery(region, account.PUUID, masteryCount)
 		if err == nil && len(masteries) > 0 {
@@ -179,7 +163,6 @@ func runProfile(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Recent matches
 	if matchCount > 0 {
 		matchIDs, err := client.GetRecentMatches(region, account.PUUID, matchCount)
 		if err == nil && len(matchIDs) > 0 {
@@ -192,12 +175,12 @@ func runProfile(cmd *cobra.Command, args []string) {
 				}
 			}
 		} else if err != nil {
-			internal.Warn(fmt.Sprintf("无法获取近期比赛: %v", err))
+			internal.Warn(fmt.Sprintf(i18n.T("error.fetch_failed"), err))
 		}
 	}
 
 	fmt.Println()
-	fmt.Println("\033[90m  💡 Development API Key 限制: 召唤师等级和排位数据可能无法获取\033[0m")
+	fmt.Println(fmt.Sprintf("\033[90m  %s\033[0m", i18n.T("profile.devkey_tip")))
 }
 
 func displayAccountInfo(a *api.Account) {
@@ -206,9 +189,10 @@ func displayAccountInfo(a *api.Account) {
 }
 
 func displayChampionMastery(masteries []api.ChampionMastery) {
-	fmt.Printf("  \033[1m🎮 英雄成就 (Champion Mastery):\033[0m\n\n")
+	fmt.Printf("  \033[1m%s:\033[0m\n\n", i18n.T("profile.mastery"))
 
-	headers := []string{"排名", "英雄", "等级", "熟练度", "最近使用"}
+	h := strings.Split(i18n.T("profile.headers.mastery"), ",")
+	headers := []string{h[0], h[1], h[2], h[3], h[4]}
 	var rows [][]string
 
 	for i, m := range masteries {
@@ -258,9 +242,10 @@ func displayRecentMatches(matches []api.MatchMetadata) {
 }
 
 func displayRecentMatchesWithNumbers(matches []api.MatchMetadata, expandIdx int) {
-	fmt.Printf("  \033[1m📊 近期比赛 (Recent Matches):\033[0m\n\n")
+	fmt.Printf("  \033[1m%s:\033[0m\n\n", i18n.T("profile.matches"))
 
-	headers := []string{"", "时间", "模式", "英雄", "KDA", "CS", "结果", "时长"}
+	h := strings.Split(i18n.T("profile.headers.matches"), ",")
+	headers := []string{h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]}
 	var rows [][]string
 
 	for i, meta := range matches {
@@ -277,7 +262,7 @@ func displayRecentMatchesWithNumbers(matches []api.MatchMetadata, expandIdx int)
 		kda := fmt.Sprintf("%d/%d/%d", meta.Kills, meta.Deaths, meta.Assists)
 		if meta.Deaths == 0 {
 			if meta.Kills+meta.Assists > 0 {
-				kda += " (完美)"
+				kda += " (" + i18n.T("profile.perfect") + ")"
 			}
 		} else {
 			ratio := float64(meta.Kills+meta.Assists) / float64(meta.Deaths)
@@ -286,17 +271,17 @@ func displayRecentMatchesWithNumbers(matches []api.MatchMetadata, expandIdx int)
 
 		cs := meta.TotalMinionsKilled + meta.NeutralMinionsKilled
 
-		result := "\033[31m败\033[0m"
+		result := "\033[31m" + i18n.T("profile.loss") + "\033[0m"
 		if meta.Win {
-			result = "\033[32m胜\033[0m"
+			result = "\033[32m" + i18n.T("profile.win") + "\033[0m"
 		}
 
 		duration := api.FormatDuration(meta.GameDuration)
 		gameMode := meta.GameMode
 		if gameMode == "CLASSIC" {
-			gameMode = "峡谷"
+			gameMode = i18n.T("profile.canyon")
 		} else if gameMode == "ARAM" {
-			gameMode = "乱斗"
+			gameMode = i18n.T("profile.aram")
 		}
 
 		rows = append(rows, []string{
@@ -312,7 +297,7 @@ func displayRecentMatchesWithNumbers(matches []api.MatchMetadata, expandIdx int)
 	}
 
 	if expandIdx > 0 {
-		fmt.Println("  用 --expand N 查看第 N 场详情（队友/对手 ID）")
+		fmt.Println("  " + i18n.T("profile.expand_tip"))
 		fmt.Println()
 	}
 
@@ -322,7 +307,7 @@ func displayRecentMatchesWithNumbers(matches []api.MatchMetadata, expandIdx int)
 func displayMatchDetail(client *api.RiotClient, region, puuid, matchID string) {
 	match, err := client.GetFullMatchInfo(region, matchID)
 	if err != nil {
-		internal.Warn(fmt.Sprintf("无法获取比赛详情: %v", err))
+		internal.Warn(fmt.Sprintf(i18n.T("error.fetch_failed"), err))
 		return
 	}
 
@@ -330,16 +315,15 @@ func displayMatchDetail(client *api.RiotClient, region, puuid, matchID string) {
 	duration := api.FormatDuration(match.GameDuration)
 	gameMode := match.GameMode
 	if gameMode == "CLASSIC" {
-		gameMode = "召唤师峡谷"
+		gameMode = i18n.T("profile.canyon")
 	} else if gameMode == "ARAM" {
-		gameMode = "极地大乱斗"
+		gameMode = i18n.T("profile.aram")
 	}
 
 	fmt.Println()
-	fmt.Printf("  \033[1m📋 比赛详情 | %s | %s | %s\033[0m\n\n",
+	fmt.Printf("  \033[1m"+i18n.T("profile.detail.title")+"\033[0m\n\n",
 		t.Format("2006-01-02 15:04"), gameMode, duration)
 
-	// Group by team
 	var blueTeam, redTeam []api.MatchParticipant
 	for _, p := range match.Participants {
 		if p.TeamID == 100 {
@@ -349,18 +333,20 @@ func displayMatchDetail(client *api.RiotClient, region, puuid, matchID string) {
 		}
 	}
 
-	displayTeam := func(label string, team []api.MatchParticipant) {
+	h := strings.Split(i18n.T("profile.detail.headers"), ",")
+	hdr := []string{h[0], h[1], h[2], h[3]}
+
+	displayTeam := func(label string, labelWin, labelLoss string, team []api.MatchParticipant) {
 		color := "\033[34m"
-		if label == "红方 (Red)" {
+		if label == labelLoss {
 			color = "\033[31m"
 		}
 
-		winLabel := "\033[32m胜\033[0m"
+		winLabel := "\033[32m" + i18n.T("profile.win") + "\033[0m"
 		if !isTeamWin(team) {
-			winLabel = "\033[31m败\033[0m"
+			winLabel = "\033[31m" + i18n.T("profile.loss") + "\033[0m"
 		}
 
-		headers2 := []string{"英雄", "玩家", "KDA", "结果"}
 		var rows2 [][]string
 		for _, p := range team {
 			name := getChampionNameByChampName(p.ChampionName)
@@ -371,21 +357,21 @@ func displayMatchDetail(client *api.RiotClient, region, puuid, matchID string) {
 			} else if p.RiotIDGameName != "" {
 				playerID = p.RiotIDGameName
 			} else {
-				playerID = "(隐藏)"
+				playerID = i18n.T("pos.hidden")
 			}
-			res := "\033[32m胜\033[0m"
+			res := "\033[32m" + i18n.T("profile.win") + "\033[0m"
 			if !p.Win {
-				res = "\033[31m败\033[0m"
+				res = "\033[31m" + i18n.T("profile.loss") + "\033[0m"
 			}
 			rows2 = append(rows2, []string{name, playerID, kda, res})
 		}
 		fmt.Printf("  %s%s (%s)\033[0m\n", color, label, winLabel)
-		internal.Table(headers2, rows2)
+		internal.Table(hdr, rows2)
 	}
 
-	displayTeam("蓝方 (Blue)", blueTeam)
+	displayTeam(i18n.T("profile.team_blue"), i18n.T("profile.team_blue"), i18n.T("profile.team_blue_loss"), blueTeam)
 	fmt.Println()
-	displayTeam("红方 (Red)", redTeam)
+	displayTeam(i18n.T("profile.team_red"), i18n.T("profile.team_blue"), i18n.T("profile.team_blue_loss"), redTeam)
 }
 
 func isTeamWin(team []api.MatchParticipant) bool {
@@ -397,7 +383,6 @@ func isTeamWin(team []api.MatchParticipant) bool {
 	return false
 }
 
-// getChampionNameByChampName tries to match by champion name (capitalization-insensitive)
 func getChampionNameByChampName(name string) string {
 	championCacheOnce.Do(func() {
 		if championCacheErr == nil && championCache == nil {
@@ -407,7 +392,6 @@ func getChampionNameByChampName(name string) string {
 	if championCacheErr != nil || championCache == nil {
 		return name
 	}
-	// Try exact match first
 	for _, v := range championCache {
 		if strings.EqualFold(v, name) {
 			return v
@@ -427,9 +411,9 @@ func runMockProfile(displayName, region string, matchCount, masteryCount int) {
 	fmt.Printf("\n  \033[1;32m%s#%s\033[0m\n", gameName, tagLine)
 	fmt.Printf("  PUUID: MOCK-xxxx-xxxx...\n\n")
 
-	// Mock champion mastery
-	fmt.Printf("  \033[1m🎮 英雄成就 (Champion Mastery):\033[0m\n\n")
-	headers := []string{"排名", "英雄", "等级", "熟练度", "最近使用"}
+	fmt.Printf("  \033[1m%s:\033[0m\n\n", i18n.T("profile.mastery"))
+	h := strings.Split(i18n.T("profile.headers.mastery"), ",")
+	headers := []string{h[0], h[1], h[2], h[3], h[4]}
 	var rows [][]string
 	champions := []string{"Akali", "Yasuo", "Ahri", "Zed", "Lee Sin"}
 	levels := []int{7, 6, 5, 5, 4}
@@ -450,17 +434,17 @@ func runMockProfile(displayName, region string, matchCount, masteryCount int) {
 	}
 
 	fmt.Println()
-	fmt.Println("\033[90m  💡 使用真实 API key 可查看实际数据\033[0m")
+	fmt.Println(fmt.Sprintf("\033[90m  %s\033[0m", "Tip: Use a real API key to see actual data"))
 }
 
 func displayMockMatches(count int) {
-	fmt.Printf("  \033[1m📊 近期比赛 (Recent Matches):\033[0m\n\n")
-
-	headers := []string{"", "时间", "模式", "英雄", "KDA", "CS", "结果", "时长"}
+	fmt.Printf("  \033[1m%s:\033[0m\n\n", i18n.T("profile.matches"))
+	h := strings.Split(i18n.T("profile.headers.matches"), ",")
+	headers := []string{h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]}
 	var rows [][]string
 
 	champions := []string{"Ahri", "Yasuo", "Lee Sin", "Jinx", "Thresh"}
-	modes := []string{"召唤师峡谷", "极地大乱斗", "召唤师峡谷"}
+	modes := []string{i18n.T("profile.canyon"), i18n.T("profile.aram"), i18n.T("profile.canyon")}
 	now := time.Now()
 
 	for i := 0; i < count && i < len(champions); i++ {
@@ -471,15 +455,15 @@ func displayMockMatches(count int) {
 
 		kda := fmt.Sprintf("%d/%d/%d", kills, deaths, assists)
 		if deaths == 0 {
-			kda += " (完美)"
+			kda += " (" + i18n.T("profile.perfect") + ")"
 		} else {
 			ratio := float64(kills+assists) / float64(deaths)
 			kda += fmt.Sprintf(" (%.2f)", ratio)
 		}
 
-		result := "\033[31m败\033[0m"
+		result := "\033[31m" + i18n.T("profile.loss") + "\033[0m"
 		if win {
-			result = "\033[32m胜\033[0m"
+			result = "\033[32m" + i18n.T("profile.win") + "\033[0m"
 		}
 
 		t := now.Add(-time.Duration(i*2) * time.Hour)
@@ -495,7 +479,7 @@ func displayMockMatches(count int) {
 		})
 	}
 
-	fmt.Println("  用 --expand N 查看第 N 场详情（队友/对手 ID）")
+	fmt.Println("  " + i18n.T("profile.expand_tip"))
 	fmt.Println()
 	internal.Table(headers, rows)
 }

@@ -5,13 +5,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"fastlol/internal/i18n"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "fastlol",
-	Short: "Fast League of Legends CLI tool",
+	Short: "Fast League of Legends CLI",
 	Long:  "Query champion counters, builds, runes, tier lists, and summoner profiles from the terminal.",
 }
 
@@ -23,13 +25,13 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().String("rapidapi-key", "", "RapidAPI key (overrides config)")
+	rootCmd.PersistentFlags().String("rapidapi-key", "", "RapidAPI key for champion data")
 }
 
 func initConfig() {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("error.fetch_failed"), err)
 		os.Exit(1)
 	}
 

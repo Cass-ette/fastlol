@@ -4,47 +4,222 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"fastlol/api"
 	"fastlol/internal"
+	"fastlol/internal/i18n"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var counterCmd = &cobra.Command{
-	Use:   "counter <champion>",
-	Short: "Show counter picks for a champion",
-	Long:  "Look up which champions are strong/weak against a given champion.",
-	Args:  cobra.ExactArgs(1),
-	Run:   runCounter,
+	Use:   "counter <champion> [enemy]",
+	Short: "Show counter picks and win rates for a champion",
+	Long: `View counter picks and win rates for a champion.
+
+Examples:
+  fastlol counter gwen              # Show who counters Gwen
+  fastlol counter gwen akali        # Show Gwen vs Akali matchup win rate`,
+	Args:  cobra.RangeArgs(1, 2),
+	Run:  runCounter,
 }
 
 func init() {
+	counterCmd.Flags().StringP("role", "", "", "Filter by role (top, jg, mid, adc, sup)")
+	counterCmd.Flags().BoolP("api", "", false, "Use RapidAPI instead of web scraping (requires API key)")
 	rootCmd.AddCommand(counterCmd)
 }
 
 func runCounter(cmd *cobra.Command, args []string) {
+	champion := args[0]
+	enemy := ""
+	if len(args) >= 2 {
+		enemy = args[1]
+	}
+	role, _ := cmd.Flags().GetString("role")
+	useAPI, _ := cmd.Flags().GetBool("api")
+
+	// Two champion names = specific matchup query
+	if enemy != "" {
+		internal.Title(fmt.Sprintf("%s vs %s", champion, enemy))
+		runMatchup(champion, enemy, role, useAPI)
+		return
+	}
+
+	internal.Title(fmt.Sprintf(i18n.T("counter.title"), champion))
+
+	// Default: use web scraping (U.GG API) - more reliable and no rate limits
+	if !useAPI {
+		data, err := scrapeCounters(champion, role)
+		if err != nil {
+			internal.Error(fmt.Sprintf("Scraping failed: %v", err))
+			os.Exit(1)
+		}
+		displayScrapedData(data)
+		return
+	}
+
+	// Use RapidAPI only if explicitly requested with --api flag
 	key := viper.GetString("rapidapi_key")
 	if key == "" {
-		internal.Error("No RapidAPI key configured.")
-		fmt.Fprintln(os.Stderr, "Set it in ~/.fastlol/config.yaml or pass --rapidapi-key")
+		internal.Error("RapidAPI key not set. Use --api flag only if you have a key.")
+		fmt.Fprintf(os.Stderr, "  Set key: fastlol config set rapidapi_key <your-key>\n")
 		os.Exit(1)
 	}
 
-	champion := args[0]
 	client := api.NewClient(key)
 
-	internal.Title(fmt.Sprintf("Counter data for: %s", champion))
-
-	data, err := client.GetChampionStat(champion)
+	// Try counter_stat endpoint first
+	data, err := client.GetCounterStat(champion, role)
 	if err != nil {
-		internal.Error(fmt.Sprintf("Failed to fetch data: %v", err))
+		// Fallback to champ_stat endpoint
+		data, err = client.GetChampionStat(champion)
+		if err != nil {
+			internal.Error(fmt.Sprintf(i18n.T("error.fetch_failed"), err))
+			os.Exit(1)
+		}
+	}
+
+	displayCounterData(champion, data)
+}
+
+func runMatchup(champion, enemy, role string, useAPI bool) {
+	key := viper.GetString("rapidapi_key")
+
+	// Default: use web scraping for matchup queries
+	if !useAPI {
+		scraper := api.NewMultiScraper()
+		matchup, err := scraper.GetMatchup(champion, enemy, role)
+		if err != nil {
+			internal.Error(fmt.Sprintf("Matchup lookup failed: %v", err))
+			os.Exit(1)
+		}
+		displayMatchup(matchup)
+		return
+	}
+
+	// Use RapidAPI only if explicitly requested
+	if key == "" {
+		internal.Error("RapidAPI key not set. Use --api flag only if you have a key.")
+		fmt.Fprintf(os.Stderr, "  Set key: fastlol config set rapidapi_key <your-key>\n")
 		os.Exit(1)
 	}
 
-	// Parse the response adaptively — API format may vary
-	displayCounterData(champion, data)
+	// Fallback: try to extract from RapidAPI counter list
+	client := api.NewClient(key)
+	data, err := client.GetCounterStat(champion, role)
+	if err != nil {
+		internal.Error(fmt.Sprintf(i18n.T("error.fetch_failed"), err))
+		os.Exit(1)
+	}
+
+	// Search for enemy in the counter list
+	found := extractMatchupFromCounterList(data, enemy)
+	if found == nil {
+		fmt.Printf("  No matchup data found for %s vs %s\n", champion, enemy)
+		return
+	}
+	displayMatchup(found)
+}
+
+func extractMatchupFromCounterList(data json.RawMessage, enemy string) *api.MatchupResult {
+	var counters api.ChampionCounter
+	if err := json.Unmarshal(data, &counters); err == nil {
+		for _, m := range counters.WeakAgainst {
+			if strings.EqualFold(m.Name, enemy) {
+				return &api.MatchupResult{
+					Champion: m.Name,
+					WinRate:  m.WinRate,
+					SampleSize: 0,
+				}
+			}
+		}
+		for _, m := range counters.StrongAgainst {
+			if strings.EqualFold(m.Name, enemy) {
+				return &api.MatchupResult{
+					Champion: m.Name,
+					WinRate:  m.WinRate,
+					SampleSize: 0,
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func displayMatchup(matchup *api.MatchupResult) {
+	wr := matchup.WinRate
+	if wr > 1 {
+		wr = wr / 100
+	}
+
+	color := "\033[32m" // Green (good)
+	if wr < 0.48 {
+		color = "\033[31m" // Red (bad)
+	} else if wr < 0.52 {
+		color = "\033[33m" // Yellow (even)
+	}
+
+	fmt.Printf("\n  Win Rate: %s%.1f%%\033[0m\n", color, wr*100)
+	if matchup.SampleSize > 0 {
+		fmt.Printf("  Sample: %d games\n", matchup.SampleSize)
+	}
+	fmt.Printf("  Source: %s\n", matchup.Source)
+}
+
+func scrapeCounters(champion, role string) (*api.CounterData, error) {
+	// Use UGGScraper directly to avoid fallback to other sources
+	// This ensures specific errors (like "insufficient data") are passed through
+	scraper := api.NewUGGScraper()
+	return scraper.GetCounters(champion, role)
+}
+
+func displayScrapedData(data *api.CounterData) {
+	// Show data source info
+	if data.Version != "" && data.Tier != "" {
+		matchupType := data.Role
+		if matchupType == "" {
+			matchupType = "Top"
+		}
+		fmt.Printf("  \033[90m[版本 %s | 段位 %s | %s vs %s | 最少200局]\033[0m\n\n", data.Version, data.Tier, data.Champion, matchupType)
+	}
+
+	if len(data.WeakAgainst) > 0 {
+		fmt.Println(i18n.T("counter.weak_against"))
+		h := strings.Split(i18n.T("counter.headers_weak"), ",")
+		headers := []string{h[0], h[1]}
+		var rows [][]string
+		for _, m := range data.WeakAgainst {
+			wr := internal.WinRateColor(m.WinRate)
+			if m.WinRate >= 1 {
+				wr = internal.WinRateColorPct(m.WinRate)
+			}
+			rows = append(rows, []string{m.Name, wr})
+		}
+		internal.Table(headers, rows)
+	}
+
+	if len(data.StrongAgainst) > 0 {
+		fmt.Println()
+		fmt.Println(i18n.T("counter.strong_against"))
+		h := strings.Split(i18n.T("counter.headers_strong"), ",")
+		headers := []string{h[0], h[1]}
+		var rows [][]string
+		for _, m := range data.StrongAgainst {
+			wr := internal.WinRateColor(m.WinRate)
+			if m.WinRate >= 1 {
+				wr = internal.WinRateColorPct(m.WinRate)
+			}
+			rows = append(rows, []string{m.Name, wr})
+		}
+		internal.Table(headers, rows)
+	}
+
+	if len(data.WeakAgainst) == 0 && len(data.StrongAgainst) == 0 {
+		fmt.Println("  " + i18n.T("tier.no_data"))
+	}
 }
 
 func displayCounterData(champion string, data json.RawMessage) {
@@ -62,6 +237,13 @@ func displayCounterData(champion string, data json.RawMessage) {
 		return
 	}
 
+	// Try as array (counter_stat may return array)
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
+		displayCounterArray(arr)
+		return
+	}
+
 	// Fallback: pretty-print raw JSON
 	var pretty interface{}
 	if err := json.Unmarshal(data, &pretty); err == nil {
@@ -72,10 +254,60 @@ func displayCounterData(champion string, data json.RawMessage) {
 	}
 }
 
+func displayCounterArray(arr []json.RawMessage) {
+	// Parse each entry as a generic object and display
+	h := strings.Split(i18n.T("counter.headers.basic"), ",")
+	headers := []string{h[0], h[1], h[2]}
+	var rows [][]string
+
+	for _, item := range arr {
+		var m map[string]interface{}
+		if err := json.Unmarshal(item, &m); err != nil {
+			continue
+		}
+		name := ""
+		for _, k := range []string{"name", "championName", "champion_name", "champion"} {
+			if v, ok := m[k]; ok {
+				name = fmt.Sprintf("%v", v)
+				break
+			}
+		}
+		if name == "" {
+			continue
+		}
+		wr := ""
+		for _, k := range []string{"winRate", "win_rate", "winrate"} {
+			if v, ok := m[k]; ok {
+				if f, ok := v.(float64); ok {
+					if f < 1 {
+						wr = internal.WinRateColor(f)
+					} else {
+						wr = internal.WinRateColorPct(f)
+					}
+				}
+				break
+			}
+		}
+		games := ""
+		for _, k := range []string{"games", "totalGames", "total_games", "count"} {
+			if v, ok := m[k]; ok {
+				games = fmt.Sprintf("%v", v)
+				break
+			}
+		}
+		rows = append(rows, []string{name, wr, games})
+	}
+
+	if len(rows) > 0 {
+		internal.Table(headers, rows)
+	}
+}
+
 func displayStructuredCounter(counter api.ChampionCounter) {
 	if len(counter.WeakAgainst) > 0 {
-		fmt.Println("\033[1;31m  Countered by (weak against):\033[0m")
-		headers := []string{"Champion", "Win Rate vs You"}
+		fmt.Println(i18n.T("counter.weak_against"))
+		h := strings.Split(i18n.T("counter.headers_weak"), ",")
+		headers := []string{h[0], h[1]}
 		var rows [][]string
 		for _, m := range counter.WeakAgainst {
 			rows = append(rows, []string{m.Name, internal.WinRateColor(m.WinRate)})
@@ -85,8 +317,9 @@ func displayStructuredCounter(counter api.ChampionCounter) {
 
 	if len(counter.StrongAgainst) > 0 {
 		fmt.Println()
-		fmt.Println("\033[1;32m  Strong against:\033[0m")
-		headers := []string{"Champion", "Your Win Rate"}
+		fmt.Println(i18n.T("counter.strong_against"))
+		h := strings.Split(i18n.T("counter.headers_strong"), ",")
+		headers := []string{h[0], h[1]}
 		var rows [][]string
 		for _, m := range counter.StrongAgainst {
 			rows = append(rows, []string{m.Name, internal.WinRateColor(m.WinRate)})
@@ -96,17 +329,15 @@ func displayStructuredCounter(counter api.ChampionCounter) {
 }
 
 func displayGenericCounter(champion string, raw map[string]json.RawMessage) {
-	// Look for common keys in the response
 	counterKeys := []string{"counter", "counters", "counterPicks", "counter_picks", "weakAgainst", "weak_against"}
 	strongKeys := []string{"strongAgainst", "strong_against", "goodAgainst", "good_against", "easyMatchups", "easy_matchups"}
 	statKeys := []string{"winRate", "win_rate", "pickRate", "pick_rate", "banRate", "ban_rate", "tier", "kda"}
 
-	// Print any stats we find
 	foundStats := false
 	for _, key := range statKeys {
 		if val, ok := raw[key]; ok {
 			if !foundStats {
-				fmt.Println("\033[1m  Stats:\033[0m")
+				fmt.Println("\033[1m  " + i18n.T("counter.stats") + ":\033[0m")
 				foundStats = true
 			}
 			var v interface{}
@@ -118,10 +349,9 @@ func displayGenericCounter(champion string, raw map[string]json.RawMessage) {
 		fmt.Println()
 	}
 
-	// Print counter matchups
 	for _, key := range counterKeys {
 		if val, ok := raw[key]; ok {
-			fmt.Println("\033[1;31m  Countered by:\033[0m")
+			fmt.Println(i18n.T("counter.weak_against"))
 			printMatchupList(val)
 			fmt.Println()
 		}
@@ -129,15 +359,14 @@ func displayGenericCounter(champion string, raw map[string]json.RawMessage) {
 
 	for _, key := range strongKeys {
 		if val, ok := raw[key]; ok {
-			fmt.Println("\033[1;32m  Strong against:\033[0m")
+			fmt.Println(i18n.T("counter.strong_against"))
 			printMatchupList(val)
 			fmt.Println()
 		}
 	}
 
-	// If nothing matched, dump all keys
 	if !foundStats {
-		fmt.Printf("  Response keys: ")
+		fmt.Printf("  返回字段: ")
 		first := true
 		for k := range raw {
 			if !first {
@@ -147,7 +376,7 @@ func displayGenericCounter(champion string, raw map[string]json.RawMessage) {
 			first = false
 		}
 		fmt.Println()
-		fmt.Println("\n  Raw response (first 500 chars):")
+		fmt.Println("\n  原始数据 (前500字符):")
 		out, _ := json.MarshalIndent(raw, "  ", "  ")
 		s := string(out)
 		if len(s) > 500 {
@@ -158,7 +387,6 @@ func displayGenericCounter(champion string, raw map[string]json.RawMessage) {
 }
 
 func printMatchupList(data json.RawMessage) {
-	// Try as array of objects
 	var matchups []map[string]interface{}
 	if err := json.Unmarshal(data, &matchups); err == nil {
 		for _, m := range matchups {
@@ -189,7 +417,6 @@ func printMatchupList(data json.RawMessage) {
 		return
 	}
 
-	// Try as array of strings
 	var names []string
 	if err := json.Unmarshal(data, &names); err == nil {
 		for _, n := range names {
@@ -198,6 +425,5 @@ func printMatchupList(data json.RawMessage) {
 		return
 	}
 
-	// Fallback
 	fmt.Printf("    %s\n", string(data))
 }

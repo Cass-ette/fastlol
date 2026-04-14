@@ -7,6 +7,7 @@ import (
 
 	"fastlol/api"
 	"fastlol/internal"
+	"fastlol/internal/i18n"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -14,7 +15,13 @@ import (
 
 var buildCmd = &cobra.Command{
 	Use:   "build <champion>",
-	Short: "Show recommended build, runes, and win rate for a champion",
+	Short: "Show recommended items, runes, and win rate for a champion",
+	Long: `Show recommended items, runes, and win rate for a champion (requires RapidAPI key).
+
+Examples:
+  fastlol build Yone
+  fastlol build "Lee Sin"
+`,
 	Args:  cobra.ExactArgs(1),
 	Run:   runBuild,
 }
@@ -26,19 +33,19 @@ func init() {
 func runBuild(cmd *cobra.Command, args []string) {
 	key := viper.GetString("rapidapi_key")
 	if key == "" {
-		internal.Error("No RapidAPI key configured.")
-		fmt.Fprintln(os.Stderr, "Set it in ~/.fastlol/config.yaml or pass --rapidapi-key")
+		internal.Error(i18n.T("error.no_rapid_key"))
+		fmt.Fprintln(os.Stderr, fmt.Sprintf(i18n.T("error.set_key_hint"), "rapidapi_key"))
 		os.Exit(1)
 	}
 
 	champion := args[0]
 	client := api.NewClient(key)
 
-	internal.Title(fmt.Sprintf("Build info for: %s", champion))
+	internal.Title(fmt.Sprintf(i18n.T("build.title"), champion))
 
 	data, err := client.GetChampionStat(champion)
 	if err != nil {
-		internal.Error(fmt.Sprintf("Failed to fetch data: %v", err))
+		internal.Error(fmt.Sprintf(i18n.T("error.fetch_failed"), err))
 		os.Exit(1)
 	}
 

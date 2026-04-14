@@ -445,3 +445,317 @@ func (c *RiotClient) GetFullMatchInfo(region, matchID string) (*FullMatchInfo, e
 
 	return result, nil
 }
+
+// LeagueEntry represents a ranked league entry
+type LeagueEntry struct {
+	QueueType    string `json:"queueType"`
+	Tier         string `json:"tier"`
+	Rank         string `json:"rank"`
+	LeaguePoints int    `json:"leaguePoints"`
+	Wins         int    `json:"wins"`
+	Losses       int    `json:"losses"`
+	HotStreak    bool   `json:"hotStreak"`
+	PlayerOrTeamName string `json:"playerOrTeamName"`
+	PUUID        string `json:"puuid,omitempty"`
+}
+
+// GetLeagueEntriesByPUUID fetches all ranked entries for a player by PUUID
+// Uses platform URL, region maps to platform
+func (c *RiotClient) GetLeagueEntriesByPUUID(region, puuid string) ([]LeagueEntry, error) {
+	baseURL := c.getPlatformBaseURL(region)
+	path := fmt.Sprintf("/lol/league/v4/entries/by-puuid/%s", puuid)
+	data, err := c.doRequest(baseURL, path)
+	if err != nil {
+		return nil, err
+	}
+	var entries []LeagueEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("parse league entries failed: %w", err)
+	}
+	return entries, nil
+}
+
+// TopPlayer represents a player in challenger/grandmaster/master leaderboard
+type TopPlayer struct {
+	PUUID         string `json:"puuid"`
+	SummonerName  string `json:"summonerName"`
+	LeaguePoints  int    `json:"leaguePoints"`
+	Rank          string `json:"rank"`
+	Tier          string `json:"tier"`
+	Wins          int    `json:"wins"`
+	Losses        int    `json:"losses"`
+	HotStreak     bool   `json:"hotStreak"`
+}
+
+// GetTopPlayers fetches challenger/grandmaster/master leaderboard
+func (c *RiotClient) GetTopPlayers(region, queue, tier string) ([]TopPlayer, error) {
+	baseURL := c.getPlatformBaseURL(region)
+	path := fmt.Sprintf("/lol/league/v4/%s/by-queue/%s", tier, queue)
+	data, err := c.doRequest(baseURL, path)
+	if err != nil {
+		return nil, err
+	}
+	// Challenger/Grandmaster/Master response is a league object with entries array
+	var league struct {
+		Entries []struct {
+			PUUID         string `json:"puuid"`
+			SummonerName  string `json:"summonerName"`
+			LeaguePoints  int    `json:"leaguePoints"`
+			Rank          string `json:"rank"`
+			Tier          string `json:"tier"`
+			Wins          int    `json:"wins"`
+			Losses        int    `json:"losses"`
+			HotStreak     bool   `json:"hotStreak"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &league); err != nil {
+		return nil, fmt.Errorf("parse top players failed: %w", err)
+	}
+	result := make([]TopPlayer, len(league.Entries))
+	for i, e := range league.Entries {
+		result[i] = TopPlayer{
+			PUUID:        e.PUUID,
+			SummonerName: e.SummonerName,
+			LeaguePoints: e.LeaguePoints,
+			Rank:         e.Rank,
+			Tier:         e.Tier,
+			Wins:         e.Wins,
+			Losses:       e.Losses,
+			HotStreak:    e.HotStreak,
+		}
+	}
+	return result, nil
+}
+
+// ServerStatus represents a platform's status
+type ServerStatus struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Locales   []string `json:"locales"`
+	Maintenances []struct {
+		ID          any `json:"id"`
+		MaintenanceType string `json:"maintenanceType"`
+		Status      string `json:"status"`
+		Titles      []struct {
+			Locale string `json:"locale"`
+			Content string `json:"content"`
+		} `json:"titles"`
+	} `json:"maintenances"`
+	Incidents []struct {
+		ID       any `json:"id"`
+		Status   string `json:"status"`
+		IncidentType string `json:"incidentType"`
+		Title    string `json:"title"`
+	} `json:"incidents"`
+}
+
+// GetServerStatus fetches server status for a region
+func (c *RiotClient) GetServerStatus(region string) (*ServerStatus, error) {
+	baseURL := c.getPlatformBaseURL(region)
+	data, err := c.doRequest(baseURL, "/lol/status/v4/platform-data")
+	if err != nil {
+		return nil, err
+	}
+	var status ServerStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		return nil, fmt.Errorf("parse server status failed: %w", err)
+	}
+	return &status, nil
+}
+
+// PlayerChallenge represents a player's challenge stats
+type PlayerChallenge struct {
+	ChallengeID      int64   `json:"challengeId"`
+	Level            string  `json:"level"`   // IRON, BRONZE, ..., CHALLENGER
+	CurrentValue     int64   `json:"currentValue"`
+	Percentile       float64 `json:"percentile"`
+}
+
+// GetPlayerChallenges fetches challenge stats for a player
+func (c *RiotClient) GetPlayerChallenges(region, puuid string) ([]PlayerChallenge, error) {
+	baseURL := c.getPlatformBaseURL(region)
+	path := fmt.Sprintf("/lol/challenges/v1/player-data/%s", puuid)
+	data, err := c.doRequest(baseURL, path)
+	if err != nil {
+		return nil, err
+	}
+	// Response is an object with challenge info
+	var response struct {
+		Challenges []PlayerChallenge `json:"challenges"`
+		// Also has totalPoints, rank etc.
+		TotalPoints struct {
+			Level     string `json:"level"`
+			CurrentValue int64 `json:"currentValue"`
+			Percentile float64 `json:"percentile"`
+		} `json:"totalPoints"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, fmt.Errorf("parse challenges failed: %w", err)
+	}
+	return response.Challenges, nil
+}
+
+// ClashPlayer represents a player's clash registration
+type ClashPlayer struct {
+	PUUID         string `json:"puuid"`
+	SummonerName  string `json:"summonerName"`
+	TeamID        string `json:"teamId"`
+	Position      string `json:"position"` // TOP, JGL, MID, ADC, SUP
+	Role          string `json:"role"`
+}
+
+// GetClashPlayers fetches clash registrations for a player
+func (c *RiotClient) GetClashPlayers(region, puuid string) ([]ClashPlayer, error) {
+	baseURL := c.getPlatformBaseURL(region)
+	path := fmt.Sprintf("/lol/clash/v1/players/by-puuid/%s", puuid)
+	data, err := c.doRequest(baseURL, path)
+	if err != nil {
+		return nil, err
+	}
+	var players []ClashPlayer
+	if err := json.Unmarshal(data, &players); err != nil {
+		return nil, fmt.Errorf("parse clash players failed: %w", err)
+	}
+	return players, nil
+}
+
+// ActiveGame represents a live/spectator game
+type ActiveGame struct {
+	GameID            int64  `json:"gameId"`
+	GameType          string `json:"gameType"`
+	GameStartTime     int64  `json:"gameStartTime"`
+	MapID             int64  `json:"mapId"`
+	GameLength        int64  `json:"gameLength"`
+	GameMode          string `json:"gameMode"`
+	GameQueueConfigID int64  `json:"gameQueueConfigId"`
+	Participants      []ActiveGameParticipant `json:"participants"`
+	BannedChampions   []BannedChampion `json:"bannedChampions"`
+}
+
+type ActiveGameParticipant struct {
+	PUUID        string `json:"puuid"`
+	ChampionID   int64  `json:"championId"`
+	TeamID       int64  `json:"teamId"`
+	SummonerName string `json:"summonerName"`
+	RiotID       string `json:"riotId"`
+	Spell1ID     int64  `json:"spell1Id"`
+	Spell2ID     int64  `json:"spell2Id"`
+}
+
+type BannedChampion struct {
+	ChampionID int64 `json:"championId"`
+	TeamID     int64 `json:"teamId"`
+	PickTurn   int   `json:"pickTurn"`
+}
+
+// GetActiveGame fetches the active (live) game for a PUUID
+func (c *RiotClient) GetActiveGame(region, puuid string) (*ActiveGame, error) {
+	baseURL := c.getPlatformBaseURL(region)
+	path := fmt.Sprintf("/lol/spectator/v5/active-games/by-summoner/%s", puuid)
+	data, err := c.doRequest(baseURL, path)
+	if err != nil {
+		return nil, err
+	}
+	var game ActiveGame
+	if err := json.Unmarshal(data, &game); err != nil {
+		return nil, fmt.Errorf("parse active game failed: %w", err)
+	}
+	return &game, nil
+}
+
+// FeaturedGames represents the featured games response
+type FeaturedGames struct {
+	GameList []ActiveGame `json:"gameList"`
+}
+
+// GetFeaturedGames fetches featured games for a region
+func (c *RiotClient) GetFeaturedGames(region string) (*FeaturedGames, error) {
+	baseURL := c.getPlatformBaseURL(region)
+	data, err := c.doRequest(baseURL, "/lol/spectator/v5/featured-games")
+	if err != nil {
+		return nil, err
+	}
+	var featured FeaturedGames
+	if err := json.Unmarshal(data, &featured); err != nil {
+		return nil, fmt.Errorf("parse featured games failed: %w", err)
+	}
+	return &featured, nil
+}
+
+// ChampionRotation represents champion rotation info
+type ChampionRotation struct {
+	FreeChampionIDs              []int `json:"freeChampionIds"`
+	FreeChampionIDsForNewPlayers []int `json:"freeChampionIdsForNewPlayers"`
+	MaxNewPlayerLevel            int   `json:"maxNewPlayerLevel"`
+}
+
+// GetChampionRotation fetches current free champion rotation
+func (c *RiotClient) GetChampionRotation(region string) (*ChampionRotation, error) {
+	baseURL := c.getPlatformBaseURL(region)
+	data, err := c.doRequest(baseURL, "/lol/platform/v3/champion-rotations")
+	if err != nil {
+		return nil, err
+	}
+	var rotation ChampionRotation
+	if err := json.Unmarshal(data, &rotation); err != nil {
+		return nil, fmt.Errorf("parse champion rotation failed: %w", err)
+	}
+	return &rotation, nil
+}
+
+// MatchTimeline represents a match timeline
+type MatchTimeline struct {
+	Metadata struct {
+		MatchID      string   `json:"matchId"`
+		Participants []string `json:"participants"`
+	} `json:"metadata"`
+	Info struct {
+		FrameInterval int `json:"frameInterval"`
+		Frames        []TimelineFrame `json:"frames"`
+	} `json:"info"`
+}
+
+type TimelineFrame struct {
+	Timestamp        int `json:"timestamp"`
+	ParticipantFrames map[string]ParticipantFrame `json:"participantFrames"`
+	Events            []TimelineEvent `json:"events"`
+}
+
+type ParticipantFrame struct {
+	ParticipantID       int `json:"participantId"`
+	TotalGold           int `json:"totalGold"`
+	CurrentGold         int `json:"currentGold"`
+	Level               int `json:"level"`
+	XP                  int `json:"xp"`
+	MinionsKilled       int `json:"minionsKilled"`
+	JungleMinionsKilled int `json:"jungleMinionsKilled"`
+	Position            struct {
+		X int `json:"x"`
+		Y int `json:"y"`
+	} `json:"position"`
+}
+
+type TimelineEvent struct {
+	Timestamp    int    `json:"timestamp"`
+	Type         string `json:"type"`
+	KillerID     int    `json:"killerId,omitempty"`
+	VictimID     int    `json:"victimId,omitempty"`
+	AssistingIDs []int  `json:"assistingParticipantIds,omitempty"`
+	ItemID       int    `json:"itemId,omitempty"`
+	MonsterType  string `json:"monsterType,omitempty"`
+}
+
+// GetMatchTimeline fetches timeline data for a match
+func (c *RiotClient) GetMatchTimeline(region, matchID string) (*MatchTimeline, error) {
+	baseURL := c.getRegionalBaseURL(region)
+	path := fmt.Sprintf("/lol/match/v5/matches/%s/timeline", matchID)
+	data, err := c.doRequest(baseURL, path)
+	if err != nil {
+		return nil, err
+	}
+	var timeline MatchTimeline
+	if err := json.Unmarshal(data, &timeline); err != nil {
+		return nil, fmt.Errorf("parse match timeline failed: %w", err)
+	}
+	return &timeline, nil
+}
