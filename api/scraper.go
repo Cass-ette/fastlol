@@ -432,9 +432,23 @@ func (s *UGGScraper) getCountersFromAPI(champion, role string) (*CounterData, er
 		"adc":     "4",
 		"support": "5",
 	}
-	roleID := roleMap[strings.ToLower(role)]
+
+	// Determine role - use provided role or champion's default role
+	effectiveRole := strings.ToLower(role)
+	if effectiveRole == "" {
+		// Look up champion's default role
+		champKey := strings.ToLower(strings.ReplaceAll(champion, " ", ""))
+		if defaultRole, ok := championDefaultRoles[champKey]; ok {
+			effectiveRole = defaultRole
+			data.Role = defaultRole
+		} else {
+			effectiveRole = "top" // Ultimate fallback
+		}
+	}
+
+	roleID := roleMap[effectiveRole]
 	if roleID == "" {
-		roleID = "17" // Default to most common role for Gwen
+		roleID = "17" // Default to most common role
 	}
 
 	// Use tier 12 (Emerald+) which matches U.GG website default
@@ -587,6 +601,28 @@ func getChampionNameByID(id string) string {
 	return "Champion " + id
 }
 
+// RuneData represents recommended runes for a champion
+type RuneData struct {
+	Champion      string       `json:"champion"`
+	Role          string       `json:"role"`
+	PrimaryTree   string       `json:"primary_tree"`
+	SecondaryTree string       `json:"secondary_tree"`
+	Keystone      RuneInfo     `json:"keystone"`
+	PrimaryRunes  []RuneInfo   `json:"primary_runes"`
+	SecondaryRunes []RuneInfo `json:"secondary_runes"`
+	Shards        []string     `json:"shards"`
+	WinRate       float64      `json:"win_rate"`
+	PickRate      float64      `json:"pick_rate"`
+	SampleSize    int          `json:"sample_size"`
+	Source        string       `json:"source"`
+}
+
+type RuneInfo struct {
+	Name string `json:"name"`
+	ID   int    `json:"id"`
+	Slot int    `json:"slot"`
+}
+
 // formatChampionName converts internal names (e.g., "xinzhao") to display names ("Xin Zhao")
 func formatChampionName(internal string) string {
 	specialCases := map[string]string{
@@ -705,6 +741,266 @@ func (s *UGGScraper) GetMatchup(champion, enemy, role string) (*MatchupResult, e
 	}
 
 	return nil, fmt.Errorf("matchup not found")
+}
+
+// GetRunes fetches recommended runes for a champion from U.GG
+func (s *UGGScraper) GetRunes(champion, role string) (*RuneData, error) {
+	champID, ok := championIDMap[strings.ToLower(strings.ReplaceAll(champion, " ", ""))]
+	if !ok {
+		return nil, fmt.Errorf("unknown champion: %s", champion)
+	}
+
+	// U.GG overview API contains rune data
+	url := fmt.Sprintf("https://stats2.u.gg/lol/1.5/overview/16_7/ranked_solo_5x5/%s/1.5.0.json", champID)
+
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	var apiData map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&apiData); err != nil {
+		return nil, err
+	}
+
+	// Parse rune data from API response
+	return s.parseRunesFromData(apiData, champion, role)
+}
+
+// Champion default roles mapping (each champion assigned to their primary/most common role)
+var championDefaultRoles = map[string]string{
+	// Top (62)
+	"aatrox": "top", "ambessa": "top", "camille": "top", "cho": "top", "darius": "top",
+	"drmundo": "top", "fiora": "top", "gangplank": "top", "garen": "top", "gnar": "top",
+	"gragas": "top", "gwen": "top", "heimerdinger": "top", "illaoi": "top", "irelia": "top",
+	"jax": "top", "jayce": "top", "kayle": "top", "kennen": "top", "kled": "top",
+	"malphite": "top", "maokai": "top", "mordekaiser": "top", "nasus": "top", "olaf": "top",
+	"ornn": "top", "poppy": "top", "quinn": "top", "renekton": "top", "riven": "top",
+	"rumble": "top", "sett": "top", "shen": "top", "sion": "top", "skarner": "top",
+	"teemo": "top", "trundle": "top", "tryndamere": "top", "urgot": "top", "volibear": "top",
+	"warwick": "top", "wukong": "top", "yasuo": "top", "yone": "top", "yorick": "top",
+	// Jungle (48)
+	"amumu": "jungle", "belveth": "jungle", "brand": "jungle", "briar": "jungle", "diana": "jungle",
+	"ekko": "jungle", "elise": "jungle", "evelynn": "jungle", "fiddlesticks": "jungle", "graves": "jungle",
+	"hecarim": "jungle", "ivern": "jungle", "jarvan": "jungle", "karthus": "jungle", "kayn": "jungle",
+	"khazix": "jungle", "kindred": "jungle", "leesin": "jungle", "lillia": "jungle", "masteryi": "jungle",
+	"nidalee": "jungle", "nocturne": "jungle", "nunu": "jungle", "pantheon": "jungle", "rammus": "jungle",
+	"reksai": "jungle", "rell": "jungle", "rengar": "jungle", "sejuani": "jungle", "shaco": "jungle",
+	"shyvana": "jungle", "taliyah": "jungle", "udyr": "jungle", "vi": "jungle", "viego": "jungle",
+	"xinzhao": "jungle", "zac": "jungle",
+	// Mid (56)
+	"ahri": "mid", "akali": "mid", "akshan": "mid", "anivia": "mid", "annie": "mid",
+	"aurelionsol": "mid", "aurora": "mid", "azir": "mid", "cassiopeia": "mid", "corki": "mid",
+	"fizz": "mid", "galio": "mid", "hwei": "mid", "kassadin": "mid", "katarina": "mid",
+	"leblanc": "mid", "lissandra": "mid", "lux": "mid", "malzahar": "mid", "mel": "mid",
+	"naafiri": "mid", "neeko": "mid", "orianna": "mid", "qiyana": "mid", "ryze": "mid",
+	"swain": "mid", "sylas": "mid", "syndra": "mid", "talon": "mid", "tristana": "mid",
+	"twistedfate": "mid", "veigar": "mid", "velkoz": "mid", "vex": "mid", "viktor": "mid",
+	"vladimir": "mid", "xerath": "mid", "zed": "mid", "ziggs": "mid", "zoe": "mid",
+	// ADC (24)
+	"aphelios": "adc", "ashe": "adc", "caitlyn": "adc", "draven": "adc", "ezreal": "adc",
+	"jhin": "adc", "jinx": "adc", "kaisa": "adc", "kalista": "adc", "kogmaw": "adc",
+	"lucian": "adc", "missfortune": "adc", "nilah": "adc", "samira": "adc", "senna": "adc",
+	"seraphine": "adc", "sivir": "adc", "smolder": "adc", "twitch": "adc", "varus": "adc",
+	"vayne": "adc", "xayah": "adc", "zeri": "adc",
+	// Support (39)
+	"alistar": "support", "bard": "support", "blitzcrank": "support", "braum": "support",
+	"janna": "support", "karma": "support", "leona": "support", "lulu": "support", "milio": "support",
+	"morgana": "support", "nautilus": "support", "pyke": "support", "rakan": "support",
+	"renataglasc": "support", "sona": "support", "soraka": "support", "tahmkench": "support",
+	"taric": "support", "thresh": "support", "yuumi": "support", "zyra": "support",
+}
+
+// Rune tree ID mapping
+var runeTreeNames = map[int]string{
+	8000: "精密",
+	8100: "主宰",
+	8200: "巫术",
+	8300: "启迪",
+	8400: "坚决",
+}
+
+// Rune ID to name mapping
+var runeNames = map[int]string{
+	// Precision 精密 (8000)
+	8005: "强攻", 8008: "致命节奏", 8021: "迅捷步法", 8010: "征服者",
+	9101: "过量治疗", 9111: "凯旋", 8009: "气定神闲",
+	9104: "传说:欢欣", 9105: "传说:韧性", 9106: "传说:血统",
+	8014: "致命一击", 8015: "砍倒", 8016: "坚毅不倒",
+	// Domination 主宰 (8100)
+	8112: "电刑", 8124: "掠食者", 8128: "黑暗收割", 9923: "丛刃",
+	8126: "恶意中伤", 8139: "血之滋味", 8140: "猛然冲击",
+	8138: "眼球收集器", 8300: "幽灵魄罗", 8301: "僵尸守卫",
+	8135: "寻宝猎人", 8134: "贪欲猎手",
+	// Sorcery 巫术 (8200)
+	8214: "召唤:艾黎", 8229: "奥术彗星", 8230: "相位猛冲",
+	8224: "无效化之法球", 8226: "法力流系带", 8275: "灵光披风",
+	8210: "绝对专注", 8234: "焦灼", 8233: "风暴聚集",
+	// Resolve 坚决 (8400)
+	8437: "不灭之握", 8439: "余震", 8465: "守护者",
+	8446: "爆破", 8473: "生命之泉", 8451: "调节", 8453: "复苏之风", 8401: "骸骨镀层",
+	8444: "复苏", 8472: "坚定",
+	// Inspiration 启迪 (8300)
+	8351: "冰川增幅", 8360: "启封的秘籍", 8369: "先攻",
+	8306: "海克斯科技闪现罗网", 8304: "神奇之鞋", 8313: "未来市场", 8321: "饼干配送",
+	8345: "星界洞悉", 8347: "宇宙洞悉", 8410: "迅捷",
+	// Stats Shards (格式为字符串)
+	5005: "+10%攻速", 5007: "+10%冷却", 5008: "+9适应之力",
+	5001: "+15-90生命", 5002: "+6护甲", 5003: "+8魔抗",
+}
+
+func (s *UGGScraper) parseRunesFromData(data map[string]interface{}, champion, role string) (*RuneData, error) {
+	runeData := &RuneData{
+		Champion: champion,
+		Role:     role,
+		Source:   "ugg",
+	}
+
+	// U.GG overview API role mapping
+	// For overview API, we need to find the correct U.GG role ID for each lane
+	// This varies by champion, so we look for the most common one
+	roleKey := "4" // Default top for most champions
+	if role != "" {
+		switch strings.ToLower(role) {
+		case "top":
+			roleKey = "4"
+		case "jungle", "jg":
+			roleKey = "1"
+		case "mid":
+			roleKey = "5"
+		case "adc", "bot":
+			roleKey = "2"
+		case "support", "sup":
+			roleKey = "3"
+		}
+	}
+
+	// Extract tier 1 (all ranks) or tier 12 (Emerald+)
+	tier, ok := data["1"].(map[string]interface{})
+	if !ok {
+		// Try tier 12 (Emerald+)
+		tier, ok = data["12"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("no rune data found")
+		}
+	}
+
+	// Get role data - it's a map of vsRole -> data
+	roleData, ok := tier[roleKey].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("no rune data for role")
+	}
+
+	// Find the first vsRole that has data
+	var runeBuildWrapper []interface{}
+	for _, vsRoleKey := range []string{"1", "2", "3", "4", "5"} {
+		if wrapper, ok := roleData[vsRoleKey].([]interface{}); ok && len(wrapper) > 0 {
+			runeBuildWrapper = wrapper
+			break
+		}
+	}
+	if runeBuildWrapper == nil {
+		return nil, fmt.Errorf("no rune build data found")
+	}
+
+	// First element is an array of build data
+	// runeBuildWrapper[0] = [[48, 35, 8000, 8300, [runes...]], [...], ...]
+	outerArray, ok := runeBuildWrapper[0].([]interface{})
+	if !ok || len(outerArray) == 0 {
+		return nil, fmt.Errorf("invalid rune wrapper structure")
+	}
+
+	// Get the actual rune build data: [48, 35, 8000, 8300, [runes...]]
+	runeBuildData, ok := outerArray[0].([]interface{})
+	if !ok || len(runeBuildData) < 5 {
+		return nil, fmt.Errorf("invalid rune data structure")
+	}
+
+	// Extract win/pick stats
+	// Structure might be [games, wins, ...] or [wins, games, ...]
+	// Try both interpretations and pick the reasonable one (< 1.0)
+	if val0, ok0 := runeBuildData[0].(float64); ok0 {
+		if val1, ok1 := runeBuildData[1].(float64); ok1 && val1 > 0 {
+			// Try val0/val1 (wins/games)
+			wr1 := val0 / val1
+			// Try val1/val0 (games/wins -> wrong but check which makes sense)
+			wr2 := val1 / val0
+			// Pick the one that's <= 1.0 (100%)
+			if wr1 <= 1.0 && wr1 > 0 {
+				runeData.WinRate = wr1
+				runeData.SampleSize = int(val1)
+			} else if wr2 <= 1.0 && wr2 > 0 {
+				runeData.WinRate = wr2
+				runeData.SampleSize = int(val0)
+			} else {
+				// Fallback: assume larger value is games
+				if val0 > val1 {
+					runeData.WinRate = val1 / val0
+					runeData.SampleSize = int(val0)
+				} else {
+					runeData.WinRate = val0 / val1
+					runeData.SampleSize = int(val1)
+				}
+			}
+		}
+	}
+
+	// Extract rune tree IDs
+	if primaryTreeID, ok := runeBuildData[2].(float64); ok {
+		runeData.PrimaryTree = runeTreeNames[int(primaryTreeID)]
+	}
+	if secondaryTreeID, ok := runeBuildData[3].(float64); ok {
+		runeData.SecondaryTree = runeTreeNames[int(secondaryTreeID)]
+	}
+
+	// Extract rune array
+	if runeArray, ok := runeBuildData[4].([]interface{}); ok {
+		// First rune is keystone
+		if len(runeArray) > 0 {
+			if keystoneID, ok := runeArray[0].(float64); ok {
+				runeData.Keystone = RuneInfo{
+					Name: runeNames[int(keystoneID)],
+					ID:   int(keystoneID),
+				}
+			}
+		}
+		// Remaining runes in primary tree
+		for i := 1; i < len(runeArray); i++ {
+			if runeID, ok := runeArray[i].(float64); ok {
+				runeData.PrimaryRunes = append(runeData.PrimaryRunes, RuneInfo{
+					Name: runeNames[int(runeID)],
+					ID:   int(runeID),
+				})
+			}
+		}
+	}
+
+	// Extract shards from different position in data
+	// Shards are usually near the end of the array
+	if len(runeBuildData) >= 12 {
+		// Look for shard array around index 11
+		if shardData, ok := runeBuildData[11].([]interface{}); ok {
+			if len(shardData) >= 3 {
+				if shards, ok := shardData[2].([]interface{}); ok {
+					for _, s := range shards {
+						if shard, ok := s.(string); ok {
+							runeData.Shards = append(runeData.Shards, shard)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return runeData, nil
 }
 
 func extractMatchupFromUGGPage(doc *goquery.Document, champion, enemy string) (*MatchupResult, error) {

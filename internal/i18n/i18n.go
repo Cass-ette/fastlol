@@ -412,6 +412,19 @@ var zhStrings = map[string]string{
 	"counter.headers.basic":  "英雄,胜率,对局数",
 	"counter.headers_weak":   "英雄,胜率",
 	"counter.headers_strong": "英雄,胜率",
+
+	// Commands - Runes
+	"runes.use":         "runes <champion>",
+	"runes.short":       "Show recommended runes for a champion",
+	"runes.long":        "Show recommended runes, keystone, and win rate for a champion from U.GG.",
+	"runes.title":       "符文推荐: %s",
+	"runes.win_rate":    "胜率",
+	"runes.pick_rate":   "选用率",
+	"runes.sample":      "样本数",
+	"runes.primary":     "主系",
+	"runes.secondary":   "副系",
+	"runes.shards":      "属性碎片",
+	"runes.no_data":     "暂无符文数据",
 	"counter.stats":          "基础数据",
 
 	"build.use":    "build <英雄名>",
