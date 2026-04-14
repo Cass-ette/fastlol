@@ -425,6 +425,13 @@ var zhStrings = map[string]string{
 	"runes.secondary":   "副系",
 	"runes.shards":      "属性碎片",
 	"runes.no_data":     "暂无符文数据",
+
+	// Commands - Items
+	"items.use":         "items <champion>",
+	"items.short":       "Show recommended items/build for a champion",
+	"items.long":        "Show recommended starting items, core build, and boots for a champion from U.GG.",
+	"items.title":       "出装推荐: %s",
+
 	"counter.stats":          "基础数据",
 
 	"build.use":    "build <英雄名>",
