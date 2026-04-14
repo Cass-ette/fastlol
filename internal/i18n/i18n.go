@@ -410,8 +410,8 @@ var zhStrings = map[string]string{
 	"counter.weak_against":   "被克制 (难打的对手)",
 	"counter.strong_against": "克制 (好打的对手)",
 	"counter.headers.basic":  "英雄,胜率,对局数",
-	"counter.headers_weak":   "英雄,对方胜率",
-	"counter.headers_strong": "英雄,你的胜率",
+	"counter.headers_weak":   "英雄,胜率",
+	"counter.headers_strong": "英雄,胜率",
 	"counter.stats":          "基础数据",
 
 	"build.use":    "build <英雄名>",

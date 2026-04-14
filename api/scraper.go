@@ -539,11 +539,15 @@ func (s *UGGScraper) getCountersFromAPI(champion, role string) (*CounterData, er
 				continue
 			}
 
-			winRate := wins / total
+			// U.GG returns opponent's win rate (e.g., Mundo vs Gwen = 43.9%)
+			// Convert to queried champion's win rate (e.g., Gwen vs Mundo = 56.1%)
+			opponentWinRate := wins / total
+			championWinRate := 1.0 - opponentWinRate
+
 			enemyName := getChampionNameByID(enemyID)
 			matchups = append(matchups, Matchup{
 				Name:    enemyName,
-				WinRate: winRate,
+				WinRate: championWinRate,  // Store champion's win rate, not opponent's
 				Games:   int(total),
 			})
 		}
