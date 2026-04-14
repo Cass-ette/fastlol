@@ -29,6 +29,7 @@ Examples:
 func init() {
 	counterCmd.Flags().StringP("role", "", "", "Filter by role (top, jg, mid, adc, sup)")
 	counterCmd.Flags().BoolP("api", "", false, "Use RapidAPI instead of web scraping (requires API key)")
+	counterCmd.Flags().BoolP("local", "", false, "Force use local scraper instead of custom server")
 	rootCmd.AddCommand(counterCmd)
 }
 
@@ -40,24 +41,35 @@ func runCounter(cmd *cobra.Command, args []string) {
 	}
 	role, _ := cmd.Flags().GetString("role")
 	useAPI, _ := cmd.Flags().GetBool("api")
+	useLocal, _ := cmd.Flags().GetBool("local")
+
+	// Check for custom server
+	serverURL := viper.GetString("api_url")
 
 	// Two champion names = specific matchup query
 	if enemy != "" {
 		internal.Title(fmt.Sprintf("%s vs %s", champion, enemy))
-		runMatchup(champion, enemy, role, useAPI)
+		runMatchup(champion, enemy, role, useAPI, useLocal, serverURL)
 		return
 	}
 
 	internal.Title(fmt.Sprintf(i18n.T("counter.title"), champion))
 
-	// Default: use web scraping (U.GG API) - more reliable and no rate limits
-	if !useAPI {
+	// Priority: --local > api_url > --api > default (local scraper)
+	if useLocal || (serverURL == "" && !useAPI) {
+		// Use local scraper (default)
 		data, err := scrapeCounters(champion, role)
 		if err != nil {
 			internal.Error(fmt.Sprintf("Scraping failed: %v", err))
 			os.Exit(1)
 		}
 		displayScrapedData(data)
+		return
+	}
+
+	if serverURL != "" {
+		// Use custom server
+		runCounterFromServer(champion, role, serverURL)
 		return
 	}
 
@@ -85,11 +97,20 @@ func runCounter(cmd *cobra.Command, args []string) {
 	displayCounterData(champion, data)
 }
 
-func runMatchup(champion, enemy, role string, useAPI bool) {
-	key := viper.GetString("rapidapi_key")
+func runCounterFromServer(champion, role, serverURL string) {
+	client := api.NewServerClient(serverURL)
+	data, err := client.GetCounters(champion, role)
+	if err != nil {
+		internal.Error(fmt.Sprintf("Server request failed: %v", err))
+		os.Exit(1)
+	}
+	displayScrapedData(data)
+}
 
-	// Default: use web scraping for matchup queries
-	if !useAPI {
+func runMatchup(champion, enemy, role string, useAPI bool, useLocal bool, serverURL string) {
+	// Priority: --local > api_url > --api > default (local scraper)
+	if useLocal || (serverURL == "" && !useAPI) {
+		// Use local scraper (default)
 		scraper := api.NewMultiScraper()
 		matchup, err := scraper.GetMatchup(champion, enemy, role)
 		if err != nil {
@@ -100,7 +121,14 @@ func runMatchup(champion, enemy, role string, useAPI bool) {
 		return
 	}
 
+	if serverURL != "" {
+		// Use custom server
+		runMatchupFromServer(champion, enemy, role, serverURL)
+		return
+	}
+
 	// Use RapidAPI only if explicitly requested
+	key := viper.GetString("rapidapi_key")
 	if key == "" {
 		internal.Error("RapidAPI key not set. Use --api flag only if you have a key.")
 		fmt.Fprintf(os.Stderr, "  Set key: fastlol config set rapidapi_key <your-key>\n")
@@ -122,6 +150,16 @@ func runMatchup(champion, enemy, role string, useAPI bool) {
 		return
 	}
 	displayMatchup(found)
+}
+
+func runMatchupFromServer(champion, enemy, role, serverURL string) {
+	client := api.NewServerClient(serverURL)
+	matchup, err := client.GetMatchup(champion, enemy, role)
+	if err != nil {
+		internal.Error(fmt.Sprintf("Server request failed: %v", err))
+		os.Exit(1)
+	}
+	displayMatchup(matchup)
 }
 
 func extractMatchupFromCounterList(data json.RawMessage, enemy string) *api.MatchupResult {

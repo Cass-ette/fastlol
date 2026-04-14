@@ -21,7 +21,7 @@ var configCmd = &cobra.Command{
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a config value",
-	Long:  "Set a config value. Keys: rapidapi_key, riot_api_key, default_region, language",
+	Long:  "Set a config value. Keys: rapidapi_key, riot_api_key, default_region, language, api_url",
 	Args:  cobra.ExactArgs(2),
 	Run:   runConfigSet,
 }
@@ -46,6 +46,7 @@ func runConfigSet(cmd *cobra.Command, args []string) {
 		"riot_api_key":   true,
 		"default_region": true,
 		"language":       true,
+		"api_url":        true,
 	}
 	if !validKeys[key] {
 		internal.Error(fmt.Sprintf(i18n.T("error.unknown_key"), key))
@@ -113,7 +114,7 @@ func langDisplayName(lang string) string {
 func runConfigShow(cmd *cobra.Command, args []string) {
 	internal.Title(i18n.T("title.config"))
 
-	keys := []string{"rapidapi_key", "riot_api_key", "default_region", "language"}
+	keys := []string{"rapidapi_key", "riot_api_key", "default_region", "language", "api_url"}
 	for _, k := range keys {
 		val := viper.GetString(k)
 		if val == "" {
