@@ -833,7 +833,8 @@ var runeNames = map[int]string{
 	// Precision 精密 (8000)
 	8005: "强攻", 8008: "致命节奏", 8021: "迅捷步法", 8010: "征服者",
 	9101: "过量治疗", 9111: "凯旋", 8009: "气定神闲",
-	9104: "传说:欢欣", 9105: "传说:韧性", 9106: "传说:血统",
+	8299: "传说:血统",
+	9104: "传说:欢欣", 9105: "传说:韧性",
 	8014: "致命一击", 8015: "砍倒", 8016: "坚毅不倒",
 	// Domination 主宰 (8100)
 	8112: "电刑", 8124: "掠食者", 8128: "黑暗收割", 9923: "丛刃",
@@ -962,20 +963,28 @@ func (s *UGGScraper) parseRunesFromData(data map[string]interface{}, champion, r
 	}
 
 	// Extract rune array
-	if runeArray, ok := runeBuildData[4].([]interface{}); ok {
+	// Structure: [keystone, primary1, primary2, primary3, secondary1, secondary2, ...]
+	if runeArray, ok := runeBuildData[4].([]interface{}); ok && len(runeArray) >= 4 {
 		// First rune is keystone
-		if len(runeArray) > 0 {
-			if keystoneID, ok := runeArray[0].(float64); ok {
-				runeData.Keystone = RuneInfo{
-					Name: runeNames[int(keystoneID)],
-					ID:   int(keystoneID),
-				}
+		if keystoneID, ok := runeArray[0].(float64); ok {
+			runeData.Keystone = RuneInfo{
+				Name: runeNames[int(keystoneID)],
+				ID:   int(keystoneID),
 			}
 		}
-		// Remaining runes in primary tree
-		for i := 1; i < len(runeArray); i++ {
+		// Next 3 are primary tree runes
+		for i := 1; i < 4 && i < len(runeArray); i++ {
 			if runeID, ok := runeArray[i].(float64); ok {
 				runeData.PrimaryRunes = append(runeData.PrimaryRunes, RuneInfo{
+					Name: runeNames[int(runeID)],
+					ID:   int(runeID),
+				})
+			}
+		}
+		// Remaining are secondary tree runes (usually 2)
+		for i := 4; i < len(runeArray); i++ {
+			if runeID, ok := runeArray[i].(float64); ok {
+				runeData.SecondaryRunes = append(runeData.SecondaryRunes, RuneInfo{
 					Name: runeNames[int(runeID)],
 					ID:   int(runeID),
 				})
