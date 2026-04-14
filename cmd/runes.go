@@ -126,7 +126,7 @@ func displayRunes(data *api.RuneData) {
 			if item.Name != "" {
 				fmt.Printf("%s", item.Name)
 			} else {
-				fmt.Printf("物品%d", item.ID)
+				fmt.Printf("[%d]", item.ID)
 			}
 		}
 		fmt.Println()
@@ -142,7 +142,7 @@ func displayRunes(data *api.RuneData) {
 			if item.Name != "" {
 				fmt.Printf("%s", item.Name)
 			} else {
-				fmt.Printf("物品%d", item.ID)
+				fmt.Printf("[%d]", item.ID)
 			}
 		}
 		fmt.Println()
