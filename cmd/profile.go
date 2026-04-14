@@ -251,7 +251,7 @@ func fetchMatchDetails(client *api.RiotClient, region, puuid string, matchIDs []
 func displayRecentMatches(matches []api.MatchMetadata) {
 	fmt.Printf("  \033[1m📊 近期比赛 (Recent Matches):\033[0m\n\n")
 
-	headers := []string{"时间", "模式", "英雄", "KDA", "结果", "时长"}
+	headers := []string{"时间", "模式", "英雄", "KDA", "CS", "结果", "时长"}
 	var rows [][]string
 
 	for _, meta := range matches {
@@ -270,6 +270,9 @@ func displayRecentMatches(matches []api.MatchMetadata) {
 			kda += fmt.Sprintf(" (%.2f)", ratio)
 		}
 
+		// CS = lane minions + neutral minions
+		cs := meta.TotalMinionsKilled + meta.NeutralMinionsKilled
+
 		result := "\033[31m败\033[0m"
 		if meta.Win {
 			result = "\033[32m胜\033[0m"
@@ -278,9 +281,9 @@ func displayRecentMatches(matches []api.MatchMetadata) {
 		duration := api.FormatDuration(meta.GameDuration)
 		gameMode := meta.GameMode
 		if gameMode == "CLASSIC" {
-			gameMode = "召唤师峡谷"
+			gameMode = "峡谷"
 		} else if gameMode == "ARAM" {
-			gameMode = "极地大乱斗"
+			gameMode = "乱斗"
 		}
 
 		rows = append(rows, []string{
@@ -288,6 +291,7 @@ func displayRecentMatches(matches []api.MatchMetadata) {
 			gameMode,
 			name,
 			kda,
+			fmt.Sprintf("%d", cs),
 			result,
 			duration,
 		})

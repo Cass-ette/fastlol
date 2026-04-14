@@ -106,16 +106,18 @@ type RankedInfo struct {
 
 // MatchMetadata represents basic match info
 type MatchMetadata struct {
-	MatchID       string `json:"matchId"`
-	GameCreation  int64  `json:"gameCreation"`
-	GameDuration  int    `json:"gameDuration"`
-	GameMode      string `json:"gameMode"`
-	GameType      string `json:"gameType"`
-	Win           bool   `json:"win"`
-	ChampionName  string `json:"championName"`
-	Kills         int    `json:"kills"`
-	Deaths        int    `json:"deaths"`
-	Assists       int    `json:"assists"`
+	MatchID             string `json:"matchId"`
+	GameCreation        int64  `json:"gameCreation"`
+	GameDuration        int    `json:"gameDuration"`
+	GameMode            string `json:"gameMode"`
+	GameType            string `json:"gameType"`
+	Win                 bool   `json:"win"`
+	ChampionName        string `json:"championName"`
+	Kills               int    `json:"kills"`
+	Deaths              int    `json:"deaths"`
+	Assists             int    `json:"assists"`
+	TotalMinionsKilled  int    `json:"totalMinionsKilled"`
+	NeutralMinionsKilled int    `json:"neutralMinionsKilled"`
 }
 
 // ChampionMastery represents champion mastery data
@@ -321,14 +323,16 @@ type MatchInfo struct {
 		GameMode     string `json:"gameMode"`
 		GameType     string `json:"gameType"`
 		Participants []struct {
-			PUUID        string `json:"puuid"`
-			ChampionName string `json:"championName"`
-			Kills        int    `json:"kills"`
-			Deaths       int    `json:"deaths"`
-			Assists      int    `json:"assists"`
-			Win          bool   `json:"win"`
-			Role         string `json:"role"`
-			Lane         string `json:"lane"`
+			PUUID                 string `json:"puuid"`
+			ChampionName          string `json:"championName"`
+			Kills                 int    `json:"kills"`
+			Deaths                int    `json:"deaths"`
+			Assists               int    `json:"assists"`
+			Win                   bool   `json:"win"`
+			Role                  string `json:"role"`
+			Lane                  string `json:"lane"`
+			TotalMinionsKilled   int    `json:"totalMinionsKilled"`
+			NeutralMinionsKilled int    `json:"neutralMinionsKilled"`
 		} `json:"participants"`
 	} `json:"info"`
 }
@@ -338,16 +342,18 @@ func (m *MatchInfo) GetPlayerMatchMetadata(puuid string) *MatchMetadata {
 	for _, p := range m.Info.Participants {
 		if p.PUUID == puuid {
 			return &MatchMetadata{
-				MatchID:      m.Metadata.MatchID,
-				GameCreation: m.Info.GameCreation,
-				GameDuration: m.Info.GameDuration,
-				GameMode:     m.Info.GameMode,
-				GameType:     m.Info.GameType,
-				Win:          p.Win,
-				ChampionName: p.ChampionName,
-				Kills:        p.Kills,
-				Deaths:       p.Deaths,
-				Assists:      p.Assists,
+				MatchID:              m.Metadata.MatchID,
+				GameCreation:          m.Info.GameCreation,
+				GameDuration:          m.Info.GameDuration,
+				GameMode:              m.Info.GameMode,
+				GameType:              m.Info.GameType,
+				Win:                   p.Win,
+				ChampionName:          p.ChampionName,
+				Kills:                 p.Kills,
+				Deaths:                p.Deaths,
+				Assists:               p.Assists,
+				TotalMinionsKilled:    p.TotalMinionsKilled,
+				NeutralMinionsKilled:  p.NeutralMinionsKilled,
 			}
 		}
 	}
