@@ -384,44 +384,7 @@ var championIDMap = map[string]string{
 }
 
 func (s *UGGScraper) GetCounters(champion, role string) (*CounterData, error) {
-	// Use U.GG counter page and parse HTML directly
-	url := fmt.Sprintf("https://u.gg/lol/champions/%s/counter", strings.ToLower(champion))
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-	req.Header.Set("Accept", "text/html")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("parse HTML failed: %w", err)
-	}
-
-	// Extract from SSR data
-	html, _ := doc.Html()
-
-	// Find matchup data in SSR
-	matchupRegex := regexp.MustCompile(`"https://stats2\.u\.gg/lol/[0-9.]+/matchups/[^"]+"`)
-	matchupKeys := matchupRegex.FindAllString(html, -1)
-
-	if len(matchupKeys) == 0 {
-		return s.getCountersFromAPI(champion, role)
-	}
-
-	// Use direct API approach which is more reliable
+	// Use direct API approach - faster and more reliable
 	return s.getCountersFromAPI(champion, role)
 }
 
