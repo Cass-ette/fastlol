@@ -359,3 +359,89 @@ func (m *MatchInfo) GetPlayerMatchMetadata(puuid string) *MatchMetadata {
 	}
 	return nil
 }
+
+// MatchParticipant represents a single participant with full identity info
+type MatchParticipant struct {
+	RiotIDGameName string `json:"riotIdGameName"`
+	RiotIDTagline  string `json:"riotIdTagline"`
+	ChampionName   string `json:"championName"`
+	ChampionID     int    `json:"championId"`
+	TeamID         int    `json:"teamId"`
+	Win            bool   `json:"win"`
+	Kills          int    `json:"kills"`
+	Deaths         int    `json:"deaths"`
+	Assists        int    `json:"assists"`
+	Role           string `json:"role"`
+	Lane            string `json:"lane"`
+}
+
+// FullMatchInfo is the full match detail with all participants
+type FullMatchInfo struct {
+	MatchID       string
+	GameCreation  int64
+	GameDuration  int
+	GameMode      string
+	Participants  []MatchParticipant
+}
+
+// GetFullMatchInfo returns match with all participant details
+func (c *RiotClient) GetFullMatchInfo(region, matchID string) (*FullMatchInfo, error) {
+	data, err := c.doRequest(c.getRegionalBaseURL(region), "/lol/match/v5/matches/"+matchID)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Metadata struct {
+			MatchID string `json:"matchId"`
+		} `json:"metadata"`
+		Info struct {
+			GameCreation int64  `json:"gameCreation"`
+			GameDuration int    `json:"gameDuration"`
+			GameMode     string `json:"gameMode"`
+			Participants []struct {
+				RiotIDGameName string `json:"riotIdGameName"`
+				RiotIDTagline  string `json:"riotIdTagline"`
+				ChampionName   string `json:"championName"`
+				ChampionID     int    `json:"championId"`
+				TeamID         int    `json:"teamId"`
+				Win            bool   `json:"win"`
+				Kills          int    `json:"kills"`
+				Deaths         int    `json:"deaths"`
+				Assists        int    `json:"assists"`
+				Role           string `json:"role"`
+				Lane            string `json:"lane"`
+			} `json:"participants"`
+		} `json:"info"`
+	}
+
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse full match failed: %w", err)
+	}
+
+	result := &FullMatchInfo{
+		MatchID:       raw.Metadata.MatchID,
+		GameCreation:  raw.Info.GameCreation,
+		GameDuration:  raw.Info.GameDuration,
+		GameMode:      raw.Info.GameMode,
+		Participants:  make([]MatchParticipant, len(raw.Info.Participants)),
+	}
+
+	for i, p := range raw.Info.Participants {
+		result.Participants[i] = MatchParticipant{
+			RiotIDGameName: p.RiotIDGameName,
+			RiotIDTagline:  p.RiotIDTagline,
+			ChampionName:   p.ChampionName,
+			ChampionID:     p.ChampionID,
+			TeamID:         p.TeamID,
+			Win:            p.Win,
+			Kills:          p.Kills,
+			Deaths:         p.Deaths,
+			Assists:        p.Assists,
+			Role:           p.Role,
+			Lane:           p.Lane,
+		}
+	}
+
+	return result, nil
+}

@@ -97,6 +97,7 @@ func init() {
 	profileCmd.Flags().StringP("region", "r", "", "服务器区域 (kr, euw1, na1, cn1)")
 	profileCmd.Flags().IntP("matches", "n", 5, "显示近期比赛数量")
 	profileCmd.Flags().IntP("mastery", "m", 5, "显示英雄成就数量")
+	profileCmd.Flags().Int("expand", 0, "展开第 N 场详情（队友/对手 ID）")
 	profileCmd.Flags().Bool("mock", false, "使用模拟数据（无需 API key）")
 	rootCmd.AddCommand(profileCmd)
 }
@@ -184,7 +185,11 @@ func runProfile(cmd *cobra.Command, args []string) {
 		if err == nil && len(matchIDs) > 0 {
 			matches := fetchMatchDetails(client, region, account.PUUID, matchIDs)
 			if len(matches) > 0 {
-				displayRecentMatches(matches)
+				expandIdx, _ := cmd.Flags().GetInt("expand")
+				displayRecentMatchesWithNumbers(matches, expandIdx)
+				if expandIdx > 0 && expandIdx <= len(matchIDs) {
+					displayMatchDetail(client, region, account.PUUID, matchIDs[expandIdx-1])
+				}
 			}
 		} else if err != nil {
 			internal.Warn(fmt.Sprintf("无法获取近期比赛: %v", err))
@@ -249,12 +254,21 @@ func fetchMatchDetails(client *api.RiotClient, region, puuid string, matchIDs []
 }
 
 func displayRecentMatches(matches []api.MatchMetadata) {
+	displayRecentMatchesWithNumbers(matches, 0)
+}
+
+func displayRecentMatchesWithNumbers(matches []api.MatchMetadata, expandIdx int) {
 	fmt.Printf("  \033[1m📊 近期比赛 (Recent Matches):\033[0m\n\n")
 
-	headers := []string{"时间", "模式", "英雄", "KDA", "CS", "结果", "时长"}
+	headers := []string{"", "时间", "模式", "英雄", "KDA", "CS", "结果", "时长"}
 	var rows [][]string
 
-	for _, meta := range matches {
+	for i, meta := range matches {
+		idx := fmt.Sprintf("[%d]", i+1)
+		if expandIdx > 0 && i+1 == expandIdx {
+			idx = fmt.Sprintf("\033[1;36m[%d]\033[0m", i+1)
+		}
+
 		t := time.UnixMilli(meta.GameCreation)
 		timeStr := t.Format("01/02 15:04")
 
@@ -270,7 +284,6 @@ func displayRecentMatches(matches []api.MatchMetadata) {
 			kda += fmt.Sprintf(" (%.2f)", ratio)
 		}
 
-		// CS = lane minions + neutral minions
 		cs := meta.TotalMinionsKilled + meta.NeutralMinionsKilled
 
 		result := "\033[31m败\033[0m"
@@ -287,6 +300,7 @@ func displayRecentMatches(matches []api.MatchMetadata) {
 		}
 
 		rows = append(rows, []string{
+			idx,
 			timeStr,
 			gameMode,
 			name,
@@ -297,7 +311,90 @@ func displayRecentMatches(matches []api.MatchMetadata) {
 		})
 	}
 
+	if expandIdx > 0 {
+		fmt.Println("  用 --expand N 查看第 N 场详情（队友/对手 ID）")
+		fmt.Println()
+	}
+
 	internal.Table(headers, rows)
+}
+
+func displayMatchDetail(client *api.RiotClient, region, puuid, matchID string) {
+	match, err := client.GetFullMatchInfo(region, matchID)
+	if err != nil {
+		internal.Warn(fmt.Sprintf("无法获取比赛详情: %v", err))
+		return
+	}
+
+	t := time.UnixMilli(match.GameCreation)
+	duration := api.FormatDuration(match.GameDuration)
+	gameMode := match.GameMode
+	if gameMode == "CLASSIC" {
+		gameMode = "召唤师峡谷"
+	} else if gameMode == "ARAM" {
+		gameMode = "极地大乱斗"
+	}
+
+	fmt.Println()
+	fmt.Printf("  \033[1m📋 比赛详情 | %s | %s | %s\033[0m\n\n",
+		t.Format("2006-01-02 15:04"), gameMode, duration)
+
+	// Group by team
+	var blueTeam, redTeam []api.MatchParticipant
+	for _, p := range match.Participants {
+		if p.TeamID == 100 {
+			blueTeam = append(blueTeam, p)
+		} else {
+			redTeam = append(redTeam, p)
+		}
+	}
+
+	displayTeam := func(label string, team []api.MatchParticipant) {
+		color := "\033[34m"
+		if label == "红方 (Red)" {
+			color = "\033[31m"
+		}
+
+		winLabel := "\033[32m胜\033[0m"
+		if !isTeamWin(team) {
+			winLabel = "\033[31m败\033[0m"
+		}
+
+		headers2 := []string{"英雄", "玩家", "KDA", "结果"}
+		var rows2 [][]string
+		for _, p := range team {
+			name := getChampionNameByChampName(p.ChampionName)
+			kda := fmt.Sprintf("%d/%d/%d", p.Kills, p.Deaths, p.Assists)
+			playerID := p.RiotIDGameName
+			if p.RiotIDTagline != "" && p.RiotIDTagline != "KR" && p.RiotIDTagline != "EUW" && p.RiotIDTagline != "NA" && p.RiotIDTagline != "CN" {
+				playerID = fmt.Sprintf("%s#%s", p.RiotIDGameName, p.RiotIDTagline)
+			} else if p.RiotIDGameName != "" {
+				playerID = p.RiotIDGameName
+			} else {
+				playerID = "(隐藏)"
+			}
+			res := "\033[32m胜\033[0m"
+			if !p.Win {
+				res = "\033[31m败\033[0m"
+			}
+			rows2 = append(rows2, []string{name, playerID, kda, res})
+		}
+		fmt.Printf("  %s%s (%s)\033[0m\n", color, label, winLabel)
+		internal.Table(headers2, rows2)
+	}
+
+	displayTeam("蓝方 (Blue)", blueTeam)
+	fmt.Println()
+	displayTeam("红方 (Red)", redTeam)
+}
+
+func isTeamWin(team []api.MatchParticipant) bool {
+	for _, p := range team {
+		if p.Win {
+			return true
+		}
+	}
+	return false
 }
 
 // getChampionNameByChampName tries to match by champion name (capitalization-insensitive)
@@ -359,7 +456,7 @@ func runMockProfile(displayName, region string, matchCount, masteryCount int) {
 func displayMockMatches(count int) {
 	fmt.Printf("  \033[1m📊 近期比赛 (Recent Matches):\033[0m\n\n")
 
-	headers := []string{"时间", "模式", "英雄", "KDA", "结果", "时长"}
+	headers := []string{"", "时间", "模式", "英雄", "KDA", "CS", "结果", "时长"}
 	var rows [][]string
 
 	champions := []string{"Ahri", "Yasuo", "Lee Sin", "Jinx", "Thresh"}
@@ -367,7 +464,6 @@ func displayMockMatches(count int) {
 	now := time.Now()
 
 	for i := 0; i < count && i < len(champions); i++ {
-		t := now.Add(-time.Duration(i*2) * time.Hour)
 		win := i%3 != 0
 		kills := 5 + i*2
 		deaths := 3 + i%4
@@ -386,15 +482,20 @@ func displayMockMatches(count int) {
 			result = "\033[32m胜\033[0m"
 		}
 
+		t := now.Add(-time.Duration(i*2) * time.Hour)
 		rows = append(rows, []string{
+			fmt.Sprintf("[%d]", i+1),
 			t.Format("01/02 15:04"),
 			modes[i%len(modes)],
 			champions[i],
 			kda,
+			fmt.Sprintf("%d", 180+i*20),
 			result,
 			fmt.Sprintf("%d:%02d", 30+i*2, 0),
 		})
 	}
 
+	fmt.Println("  用 --expand N 查看第 N 场详情（队友/对手 ID）")
+	fmt.Println()
 	internal.Table(headers, rows)
 }
