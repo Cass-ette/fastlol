@@ -15,11 +15,13 @@ import (
 
 var profileCmd = &cobra.Command{
 	Use:   "profile <summoner> [tag]",
-	Short: "Show summoner profile and recent matches",
-	Long: `Look up a summoner's profile including:
-  - Summoner level and profile icon
-  - Ranked stats for each queue
-  - Recent match history (last 10 games)
+	Short: "Show summoner profile, champion mastery, and recent matches",
+	Long: `Look up a summoner's profile using Riot API:
+  - Basic info from Riot ID (via account-v1)
+  - Champion mastery (top champions)
+  - Recent match history (via match-v5)
+
+Note: Development API keys have limited access to summoner-v4 and ranked data.
 
 For Riot ID format: fastlol profile "GameName" TAG
 For legacy names: fastlol profile "SummonerName"
@@ -32,6 +34,7 @@ Default region can be set in config or with --region flag.`,
 func init() {
 	profileCmd.Flags().StringP("region", "r", "", "Server region (na1, euw1, kr, etc.)")
 	profileCmd.Flags().IntP("matches", "n", 5, "Number of recent matches to show (max 20)")
+	profileCmd.Flags().IntP("mastery", "m", 5, "Number of top champions to show")
 	profileCmd.Flags().Bool("mock", false, "Use mock data for testing (no API key needed)")
 	rootCmd.AddCommand(profileCmd)
 }
@@ -59,6 +62,7 @@ func runProfile(cmd *cobra.Command, args []string) {
 	region = strings.ToLower(region)
 
 	matchCount, _ := cmd.Flags().GetInt("matches")
+	masteryCount, _ := cmd.Flags().GetInt("mastery")
 
 	gameName := args[0]
 	tagLine := ""
@@ -66,175 +70,128 @@ func runProfile(cmd *cobra.Command, args []string) {
 		tagLine = args[1]
 	}
 
+	// Handle Riot ID format with #
+	if tagLine == "" && strings.Contains(gameName, "#") {
+		parts := strings.SplitN(gameName, "#", 2)
+		gameName = parts[0]
+		tagLine = parts[1]
+	}
+
 	displayName := gameName
 	if tagLine != "" {
 		displayName = fmt.Sprintf("%s#%s", gameName, tagLine)
 	}
 
-	var summoner *api.Summoner
-	var rankedStats []api.RankedInfo
-	var matches []api.MatchMetadata
-
 	if useMock {
 		internal.Title(fmt.Sprintf("[MOCK] Profile: %s (%s)", displayName, region))
-		summoner, rankedStats, matches = generateMockData(displayName, region, matchCount)
+		runMockProfile(displayName, region, matchCount, masteryCount)
+		return
+	}
+
+	client := api.NewRiotClient(key)
+	internal.Title(fmt.Sprintf("Looking up: %s (%s)", displayName, region))
+
+	// Step 1: Get account via account-v1 (always available)
+	var account *api.Account
+	var err error
+
+	if tagLine != "" {
+		account, err = client.GetAccountByTag(region, gameName, tagLine)
 	} else {
-		client := api.NewRiotClient(key)
-
-		var err error
-		if tagLine != "" {
-			internal.Title(fmt.Sprintf("Looking up: %s#%s (%s)", gameName, tagLine, region))
-			summoner, err = client.GetSummonerByTag(region, gameName, tagLine)
+		// Try legacy summoner name lookup
+		summoner, err := client.GetSummonerByName(region, gameName)
+		if err == nil {
+			account = &api.Account{
+				PUUID:    summoner.PUUID,
+				GameName: gameName,
+				TagLine:  "",
+			}
 		} else {
-			internal.Title(fmt.Sprintf("Looking up: %s (%s)", gameName, region))
-			if strings.Contains(gameName, "#") {
-				parts := strings.SplitN(gameName, "#", 2)
-				summoner, err = client.GetSummonerByTag(region, parts[0], parts[1])
-			} else {
-				summoner, err = client.GetSummonerByName(region, gameName)
+			// Fallback: try as Riot ID with empty tag or use as-is
+			account = &api.Account{
+				PUUID:    "",
+				GameName: gameName,
+				TagLine:  tagLine,
 			}
+			internal.Warn("Could not resolve summoner name. For best results, use 'Name#TAG' format.")
 		}
+	}
 
-		if err != nil {
-			internal.Error(fmt.Sprintf("Failed to find summoner: %v", err))
-			fmt.Fprintln(os.Stderr, "\nTip: Use 'Name#TAG' format for Riot IDs")
-			os.Exit(1)
-		}
+	if err != nil || account == nil || account.PUUID == "" {
+		internal.Error(fmt.Sprintf("Failed to find account: %v", err))
+		fmt.Fprintln(os.Stderr, "\nTip: Use Riot ID format: 'Name#TAG'")
+		fmt.Fprintln(os.Stderr, "Example: fastlol profile 'Hide on bush' KR")
+		os.Exit(1)
+	}
 
-		rankedStats, _ = client.GetRankedStats(region, summoner.ID)
-		matchIDs, _ := client.GetRecentMatches(region, summoner.PUUID, matchCount)
-		for _, id := range matchIDs {
-			match, err := client.GetMatchInfo(region, id)
-			if err == nil {
-				meta := match.GetPlayerMatchMetadata(summoner.PUUID)
-				if meta != nil {
-					matches = append(matches, *meta)
-				}
+	displayAccountInfo(account)
+
+	// Step 2: Try to get champion mastery (available for dev keys)
+	masteries, err := client.GetChampionMastery(region, account.PUUID, masteryCount)
+	if err == nil && len(masteries) > 0 {
+		displayChampionMastery(masteries)
+	}
+
+	// Step 3: Get recent matches (available for dev keys)
+	if matchCount > 0 {
+		matchIDs, err := client.GetRecentMatches(region, account.PUUID, matchCount)
+		if err == nil && len(matchIDs) > 0 {
+			matches := fetchMatchDetails(client, region, account.PUUID, matchIDs)
+			if len(matches) > 0 {
+				displayRecentMatches(matches)
 			}
+		} else if err != nil {
+			internal.Warn(fmt.Sprintf("Could not fetch matches: %v", err))
 		}
 	}
 
-	displaySummonerInfo(summoner)
-	if len(rankedStats) > 0 {
-		displayRankedStats(rankedStats)
-	}
-	if len(matches) > 0 {
-		displayRecentMatches(matches)
-	}
+	// Note about limited data
+	fmt.Println()
+	fmt.Println("\033[90m  Note: Development API keys have limited access.")
+	fmt.Println("        Summoner level and ranked stats may be unavailable.\033[0m")
 }
 
-func generateMockData(name, region string, matchCount int) (*api.Summoner, []api.RankedInfo, []api.MatchMetadata) {
-	summoner := &api.Summoner{
-		ID:            "mock-id-12345",
-		AccountID:     "mock-account",
-		PUUID:         "mock-puuid-xxx",
-		Name:          name,
-		ProfileIconID: 29,
-		RevisionDate:  time.Now().UnixMilli(),
-		SummonerLevel: 342,
-	}
-
-	ranked := []api.RankedInfo{
-		{
-			QueueType:    "RANKED_SOLO_5x5",
-			Tier:         "DIAMOND",
-			Rank:         "IV",
-			LeaguePoints: 67,
-			Wins:         145,
-			Losses:       132,
-			HotStreak:    true,
-		},
-		{
-			QueueType:    "RANKED_FLEX_SR",
-			Tier:         "PLATINUM",
-			Rank:         "II",
-			LeaguePoints: 45,
-			Wins:         89,
-			Losses:       76,
-			HotStreak:    false,
-		},
-	}
-
-	champions := []string{"Ahri", "Yasuo", "Lee Sin", "Jinx", "Thresh", "Zed", "Viego", "Kaisa"}
-	modes := []string{"CLASSIC", "ARAM", "URF"}
-
-	var matches []api.MatchMetadata
-	now := time.Now()
-	for i := 0; i < matchCount && i < len(champions); i++ {
-		win := i%3 != 0 // 2/3 win rate
-		kills := 5 + i*2
-		deaths := 3 + i%4
-		assists := 8 + i
-
-		matches = append(matches, api.MatchMetadata{
-			MatchID:       fmt.Sprintf("MOCK_%d", i),
-			GameCreation:  now.Add(-time.Duration(i*2) * time.Hour).UnixMilli(),
-			GameDuration:  1800 + i*120,
-			GameMode:      modes[i%len(modes)],
-			GameType:      "MATCHED_GAME",
-			Win:           win,
-			ChampionName:  champions[i%len(champions)],
-			Kills:         kills,
-			Deaths:        deaths,
-			Assists:       assists,
-		})
-	}
-
-	return summoner, ranked, matches
-}
-
-func displaySummonerInfo(s *api.Summoner) {
-	fmt.Printf("\033[1;32m  %s\033[0m\n", s.Name)
-	fmt.Printf("  Level: %d\n", s.SummonerLevel)
-	fmt.Printf("  Profile Icon: #%d\n", s.ProfileIconID)
+func displayAccountInfo(a *api.Account) {
+	fmt.Printf("\033[1;32m  %s#%s\033[0m\n", a.GameName, a.TagLine)
+	fmt.Printf("  PUUID: %s...%s\n", a.PUUID[:8], a.PUUID[len(a.PUUID)-8:])
 	fmt.Println()
 }
 
-func displayRankedStats(stats []api.RankedInfo) {
-	fmt.Println("\033[1m  Ranked Stats:\033[0m")
+func displayChampionMastery(masteries []api.ChampionMastery) {
+	fmt.Println("\033[1m  Champion Mastery:\033[0m")
 	fmt.Println()
 
-	headers := []string{"Queue", "Tier", "LP", "W/L", "Win Rate", "Hot Streak"}
+	headers := []string{"Rank", "Champion ID", "Level", "Points", "Last Played"}
 	var rows [][]string
 
-	queueNames := map[string]string{
-		"RANKED_SOLO_5x5": "Solo/Duo",
-		"RANKED_FLEX_SR":  "Flex 5v5",
-		"RANKED_FLEX_TT":  "Flex 3v3",
-		"RANKED_TFT":      "TFT",
-	}
-
-	for _, s := range stats {
-		queueName := queueNames[s.QueueType]
-		if queueName == "" {
-			queueName = s.QueueType
-		}
-
-		winRate := api.WinRate(s.Wins, s.Losses)
-		wrStr := fmt.Sprintf("%.1f%%", winRate)
-		if winRate >= 55 {
-			wrStr = fmt.Sprintf("\033[32m%.1f%%\033[0m", winRate)
-		} else if winRate < 45 {
-			wrStr = fmt.Sprintf("\033[31m%.1f%%\033[0m", winRate)
-		}
-
-		hotStreak := ""
-		if s.HotStreak {
-			hotStreak = "🔥"
-		}
-
+	for i, m := range masteries {
+		lastPlayed := time.UnixMilli(m.LastPlayTime).Format("01/02")
 		rows = append(rows, []string{
-			queueName,
-			fmt.Sprintf("%s %s", s.Tier, s.Rank),
-			fmt.Sprintf("%d LP", s.LeaguePoints),
-			fmt.Sprintf("%d/%d", s.Wins, s.Losses),
-			wrStr,
-			hotStreak,
+			fmt.Sprintf("%d", i+1),
+			fmt.Sprintf("%d", m.ChampionID),
+			fmt.Sprintf("%d", m.ChampionLevel),
+			fmt.Sprintf("%d", m.ChampionPoints),
+			lastPlayed,
 		})
 	}
 
 	internal.Table(headers, rows)
 	fmt.Println()
+}
+
+func fetchMatchDetails(client *api.RiotClient, region, puuid string, matchIDs []string) []api.MatchMetadata {
+	var matches []api.MatchMetadata
+	for _, id := range matchIDs {
+		match, err := client.GetMatchInfo(region, id)
+		if err != nil {
+			continue
+		}
+		meta := match.GetPlayerMatchMetadata(puuid)
+		if meta != nil {
+			matches = append(matches, *meta)
+		}
+	}
+	return matches
 }
 
 func displayRecentMatches(matches []api.MatchMetadata) {
@@ -272,6 +229,91 @@ func displayRecentMatches(matches []api.MatchMetadata) {
 			kda,
 			result,
 			duration,
+		})
+	}
+
+	internal.Table(headers, rows)
+}
+
+func runMockProfile(displayName, region string, matchCount, masteryCount int) {
+	// Account info
+	parts := strings.Split(displayName, "#")
+	gameName := parts[0]
+	tagLine := ""
+	if len(parts) > 1 {
+		tagLine = parts[1]
+	}
+
+	fmt.Printf("\033[1;32m  %s#%s\033[0m\n", gameName, tagLine)
+	fmt.Printf("  PUUID: MOCK-xxxx-xxxx...\n")
+	fmt.Println()
+
+	// Mock champion mastery
+	fmt.Println("\033[1m  Champion Mastery:\033[0m")
+	fmt.Println()
+	headers := []string{"Rank", "Champion ID", "Level", "Points", "Last Played"}
+	var rows [][]string
+	champions := []int{84, 126, 517, 103, 238} // Akali, Jayce, Syndra, Ahri, Zed
+	for i := 0; i < masteryCount && i < len(champions); i++ {
+		rows = append(rows, []string{
+			fmt.Sprintf("%d", i+1),
+			fmt.Sprintf("%d", champions[i]),
+			fmt.Sprintf("%d", 7-i),
+			fmt.Sprintf("%d", 300000-i*50000),
+			"04/14",
+		})
+	}
+	internal.Table(headers, rows)
+	fmt.Println()
+
+	// Mock matches
+	if matchCount > 0 {
+		displayMockMatches(matchCount)
+	}
+
+	fmt.Println()
+	fmt.Println("\033[90m  Note: Development API keys have limited access.")
+	fmt.Println("        Summoner level and ranked stats may be unavailable.\033[0m")
+}
+
+func displayMockMatches(count int) {
+	fmt.Println("\033[1m  Recent Matches:\033[0m")
+	fmt.Println()
+
+	headers := []string{"Time", "Mode", "Champion", "KDA", "Result", "Duration"}
+	var rows [][]string
+
+	champions := []string{"Ahri", "Yasuo", "Lee Sin", "Jinx", "Thresh", "Zed", "Viego", "Kaisa"}
+	modes := []string{"CLASSIC", "ARAM", "URF"}
+	now := time.Now()
+
+	for i := 0; i < count && i < len(champions); i++ {
+		t := now.Add(-time.Duration(i*2) * time.Hour)
+		win := i%3 != 0
+		kills := 5 + i*2
+		deaths := 3 + i%4
+		assists := 8 + i
+
+		kda := fmt.Sprintf("%d/%d/%d", kills, deaths, assists)
+		if deaths == 0 {
+			kda += " (Perfect)"
+		} else {
+			ratio := float64(kills+assists) / float64(deaths)
+			kda += fmt.Sprintf(" (%.2f)", ratio)
+		}
+
+		result := "\033[31mLoss\033[0m"
+		if win {
+			result = "\033[32mWin\033[0m"
+		}
+
+		rows = append(rows, []string{
+			t.Format("01/02 15:04"),
+			modes[i%len(modes)],
+			champions[i],
+			kda,
+			result,
+			fmt.Sprintf("%d:%02d", 30+i*2, 0),
 		})
 	}
 

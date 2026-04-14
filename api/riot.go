@@ -118,6 +118,26 @@ type MatchMetadata struct {
 	Assists       int    `json:"assists"`
 }
 
+// ChampionMastery represents champion mastery data
+type ChampionMastery struct {
+	PUUID                   string `json:"puuid"`
+	ChampionID              int64  `json:"championId"`
+	ChampionLevel           int    `json:"championLevel"`
+	ChampionPoints          int    `json:"championPoints"`
+	LastPlayTime            int64  `json:"lastPlayTime"`
+	ChampionPointsSinceLastLevel int64 `json:"championPointsSinceLastLevel"`
+	ChampionPointsUntilNextLevel int64 `json:"championPointsUntilNextLevel"`
+	TokensEarned            int    `json:"tokensEarned"`
+	ChestGranted            bool   `json:"chestGranted"`
+}
+
+// Account represents basic account info from account-v1
+type Account struct {
+	PUUID    string `json:"puuid"`
+	GameName string `json:"gameName"`
+	TagLine  string `json:"tagLine"`
+}
+
 // FormatDuration converts seconds to mm:ss format
 func FormatDuration(seconds int) string {
 	m := seconds / 60
@@ -136,7 +156,7 @@ func WinRate(wins, losses int) float64 {
 
 // GetSummonerByName fetches summoner info by name (deprecated in API v5 but still works for some regions)
 func (c *RiotClient) GetSummonerByName(region, name string) (*Summoner, error) {
-	encodedName := url.QueryEscape(name)
+	encodedName := url.PathEscape(name)
 	baseURL := c.getPlatformBaseURL(region)
 	data, err := c.doRequest(baseURL, "/lol/summoner/v4/summoners/by-name/"+encodedName)
 	if err != nil {
@@ -150,27 +170,46 @@ func (c *RiotClient) GetSummonerByName(region, name string) (*Summoner, error) {
 	return &summoner, nil
 }
 
-// GetSummonerByTag fetches summoner by gameName and tagLine (new Riot ID system)
-func (c *RiotClient) GetSummonerByTag(region, gameName, tagLine string) (*Summoner, error) {
-	encodedName := url.QueryEscape(gameName)
-	baseURL := c.getPlatformBaseURL(region)
-	path := fmt.Sprintf("/riot/account/v1/accounts/by-riot-id/%s/%s", encodedName, tagLine)
+// GetAccountByTag fetches account by Riot ID (gameName#tagLine)
+// This is the most reliable endpoint for development keys
+func (c *RiotClient) GetAccountByTag(region, gameName, tagLine string) (*Account, error) {
+	encodedName := url.PathEscape(gameName)
+	encodedTag := url.PathEscape(tagLine)
+	// account-v1 uses regional routing (americas/europe/asia), not platform routing
+	baseURL := c.getRegionalBaseURL(region)
+	path := fmt.Sprintf("/riot/account/v1/accounts/by-riot-id/%s/%s", encodedName, encodedTag)
 	data, err := c.doRequest(baseURL, path)
 	if err != nil {
 		return nil, err
 	}
 
-	// This returns puuid, then we need to get summoner by puuid
-	var account struct {
-		PUUID    string `json:"puuid"`
-		GameName string `json:"gameName"`
-		TagLine  string `json:"tagLine"`
-	}
+	var account Account
 	if err := json.Unmarshal(data, &account); err != nil {
 		return nil, fmt.Errorf("parse account failed: %w", err)
 	}
+	return &account, nil
+}
 
-	return c.GetSummonerByPUUID(region, account.PUUID)
+// GetSummonerByTag fetches summoner by gameName and tagLine (new Riot ID system)
+// Note: This may fail with 403 for development keys on summoner-v4 endpoint
+func (c *RiotClient) GetSummonerByTag(region, gameName, tagLine string) (*Summoner, error) {
+	// Get account first
+	account, err := c.GetAccountByTag(region, gameName, tagLine)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to get summoner data (may fail with 403 for dev keys)
+	summoner, err := c.GetSummonerByPUUID(region, account.PUUID)
+	if err != nil {
+		// If summoner-v4 fails, return minimal info from account
+		return &Summoner{
+			PUUID:         account.PUUID,
+			Name:          fmt.Sprintf("%s#%s", account.GameName, account.TagLine),
+			SummonerLevel: 0, // Unknown due to API restriction
+		}, nil
+	}
+	return summoner, nil
 }
 
 // GetSummonerByPUUID fetches summoner by PUUID
@@ -230,6 +269,30 @@ func (c *RiotClient) GetRecentMatches(region, puuid string, count int) ([]string
 		return nil, fmt.Errorf("parse matches failed: %w", err)
 	}
 	return matches, nil
+}
+
+// GetChampionMastery fetches top champion mastery entries for a player
+// Uses platform routing (kr, na1, etc.) - available for development keys
+func (c *RiotClient) GetChampionMastery(region, puuid string, count int) ([]ChampionMastery, error) {
+	if count <= 0 {
+		count = 3
+	}
+	if count > 10 {
+		count = 10
+	}
+
+	baseURL := c.getPlatformBaseURL(region)
+	path := fmt.Sprintf("/lol/champion-mastery/v4/champion-masteries/by-puuid/%s/top?count=%d", puuid, count)
+	data, err := c.doRequest(baseURL, path)
+	if err != nil {
+		return nil, err
+	}
+
+	var masteries []ChampionMastery
+	if err := json.Unmarshal(data, &masteries); err != nil {
+		return nil, fmt.Errorf("parse champion mastery failed: %w", err)
+	}
+	return masteries, nil
 }
 
 // GetMatchInfo fetches detailed match info
