@@ -801,7 +801,7 @@ var championDefaultRoles = map[string]string{
 	"ornn": "top", "poppy": "top", "quinn": "top", "renekton": "top", "riven": "top",
 	"rumble": "top", "sett": "top", "shen": "top", "sion": "top", "skarner": "top",
 	"teemo": "top", "trundle": "top", "tryndamere": "top", "urgot": "top", "volibear": "top",
-	"warwick": "top", "wukong": "top", "yasuo": "top", "yone": "top", "yorick": "top",
+	"warwick": "top", "wukong": "top", "yorick": "top",
 	// Jungle (48)
 	"amumu": "jungle", "belveth": "jungle", "brand": "jungle", "briar": "jungle", "diana": "jungle",
 	"ekko": "jungle", "elise": "jungle", "evelynn": "jungle", "fiddlesticks": "jungle", "graves": "jungle",
@@ -811,7 +811,7 @@ var championDefaultRoles = map[string]string{
 	"reksai": "jungle", "rell": "jungle", "rengar": "jungle", "sejuani": "jungle", "shaco": "jungle",
 	"shyvana": "jungle", "taliyah": "jungle", "udyr": "jungle", "vi": "jungle", "viego": "jungle",
 	"xinzhao": "jungle", "zac": "jungle",
-	// Mid (56)
+	// Mid (58)
 	"ahri": "mid", "akali": "mid", "akshan": "mid", "anivia": "mid", "annie": "mid",
 	"aurelionsol": "mid", "aurora": "mid", "azir": "mid", "cassiopeia": "mid", "corki": "mid",
 	"fizz": "mid", "galio": "mid", "hwei": "mid", "kassadin": "mid", "katarina": "mid",
@@ -819,7 +819,7 @@ var championDefaultRoles = map[string]string{
 	"naafiri": "mid", "neeko": "mid", "orianna": "mid", "qiyana": "mid", "ryze": "mid",
 	"swain": "mid", "sylas": "mid", "syndra": "mid", "talon": "mid", "tristana": "mid",
 	"twistedfate": "mid", "veigar": "mid", "velkoz": "mid", "vex": "mid", "viktor": "mid",
-	"vladimir": "mid", "xerath": "mid", "zed": "mid", "ziggs": "mid", "zoe": "mid",
+	"vladimir": "mid", "xerath": "mid", "yasuo": "mid", "yone": "mid", "zed": "mid", "ziggs": "mid", "zoe": "mid",
 	// ADC (24)
 	"aphelios": "adc", "ashe": "adc", "caitlyn": "adc", "draven": "adc", "ezreal": "adc",
 	"jhin": "adc", "jinx": "adc", "kaisa": "adc", "kalista": "adc", "kogmaw": "adc",
@@ -881,8 +881,8 @@ var itemNames = map[int]string{
 	1036: "长剑", 1039: "冰雹刀刃", 1040: "黑曜石锋刃", 1052: "增幅典籍",
 	1053: "吸血鬼节杖", 1054: "多兰之盾", 1055: "多兰之刃", 1056: "多兰之戒",
 	1057: "负极斗篷", 1058: "无用大棒", 1082: "黑暗封印", 1083: "萃取",
-	1103: "踏苔蜥幼苗", 1105: "踏苔蜥幼苗", 1106: "风行狐幼体", 1107: "焰爪猫幼崽",
-	2003: "生命药水",
+	1101: "冰雹刀刃(旧)", 1102: "灰烬小刀(旧)", 1103: "踏苔蜥幼苗", 1105: "踏苔蜥幼苗",
+	1106: "风行狐幼体", 1107: "焰爪猫幼崽", 2003: "生命药水",
 	2031: "腐蚀药水", 2033: "复用型药水", 2055: "控制守卫",
 	// Basic items
 	1001: "鞋子", 1004: "仙女护符", 1006: "治疗宝珠", 1011: "巨人腰带",
@@ -951,25 +951,6 @@ func (s *UGGScraper) parseRunesFromData(data map[string]interface{}, champion, r
 		Source:   "ugg",
 	}
 
-	// U.GG overview API role mapping
-	// For overview API, we need to find the correct U.GG role ID for each lane
-	// This varies by champion, so we look for the most common one
-	roleKey := "4" // Default top for most champions
-	if role != "" {
-		switch strings.ToLower(role) {
-		case "top":
-			roleKey = "4"
-		case "jungle", "jg":
-			roleKey = "1"
-		case "mid":
-			roleKey = "5"
-		case "adc", "bot":
-			roleKey = "2"
-		case "support", "sup":
-			roleKey = "3"
-		}
-	}
-
 	// Extract tier 1 (all ranks) or tier 12 (Emerald+)
 	tier, ok := data["1"].(map[string]interface{})
 	if !ok {
@@ -980,30 +961,76 @@ func (s *UGGScraper) parseRunesFromData(data map[string]interface{}, champion, r
 		}
 	}
 
-	// Get role data - it's a map of vsRole -> data
-	roleData, ok := tier[roleKey].(map[string]interface{})
+	// U.GG roleKey varies by champion, find the role with most games
+	// If user specified a role, we'll note it but still use the data from the most popular role
+	// since U.GG role mapping is dynamic per champion
+	var bestRoleKey string
+	maxTotalGames := 0.0
+
+	for roleKey, roleData := range tier {
+		if roleDataMap, ok := roleData.(map[string]interface{}); ok {
+			totalGames := 0.0
+			for _, vsRoleData := range roleDataMap {
+				if vsBuilds, ok := vsRoleData.([]interface{}); ok {
+					for _, build := range vsBuilds {
+						if buildData, ok := build.([]interface{}); ok && len(buildData) > 0 {
+							if stats, ok := buildData[0].([]interface{}); ok && len(stats) >= 1 {
+								if games, ok := stats[0].(float64); ok {
+									totalGames += games
+								}
+							}
+						}
+					}
+				}
+			}
+			if totalGames > maxTotalGames {
+				maxTotalGames = totalGames
+				bestRoleKey = roleKey
+			}
+		}
+	}
+
+	if bestRoleKey == "" {
+		return nil, fmt.Errorf("no rune data found")
+	}
+
+	roleData, ok := tier[bestRoleKey].(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("no rune data for role")
 	}
 
-	// Find the first vsRole that has data
-	var runeBuildWrapper []interface{}
-	for _, vsRoleKey := range []string{"1", "2", "3", "4", "5"} {
-		if wrapper, ok := roleData[vsRoleKey].([]interface{}); ok && len(wrapper) > 0 {
-			runeBuildWrapper = wrapper
-			break
+	// Find the vsRole with most total games across all builds
+	var bestBuildWrapper []interface{}
+	maxVsRoleGames := 0.0
+
+	for _, vsRoleData := range roleData {
+		if wrapper, ok := vsRoleData.([]interface{}); ok {
+			totalGames := 0.0
+			for _, item := range wrapper {
+				if buildData, ok := item.([]interface{}); ok && len(buildData) > 0 {
+					if stats, ok := buildData[0].([]interface{}); ok && len(stats) > 0 {
+						if games, ok := stats[0].(float64); ok {
+							totalGames += games
+						}
+					}
+				}
+			}
+			if totalGames > maxVsRoleGames {
+				maxVsRoleGames = totalGames
+				bestBuildWrapper = wrapper
+			}
 		}
 	}
-	if runeBuildWrapper == nil {
+
+	if bestBuildWrapper == nil {
 		return nil, fmt.Errorf("no rune build data found")
 	}
 
-	// runeBuildWrapper is a list of builds, each build is an array
-	// Find the build with most games (sample size)
+	// Find the build with most games within the best vsRole
 	var bestBuild []interface{}
 	maxGames := 0.0
 
-	for _, item := range runeBuildWrapper {
+	for _, item := range bestBuildWrapper {
 		buildData, ok := item.([]interface{})
 		if !ok || len(buildData) < 5 {
 			continue
