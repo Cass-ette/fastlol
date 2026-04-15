@@ -752,9 +752,17 @@ func (s *UGGScraper) GetMatchup(champion, enemy, role string) (*MatchupResult, e
 
 // GetRunes fetches recommended runes for a champion from U.GG
 func (s *UGGScraper) GetRunes(champion, role string) (*RuneData, error) {
-	champID, ok := championIDMap[strings.ToLower(strings.ReplaceAll(champion, " ", ""))]
+	champKey := strings.ToLower(strings.ReplaceAll(champion, " ", ""))
+	champID, ok := championIDMap[champKey]
 	if !ok {
 		return nil, fmt.Errorf("unknown champion: %s", champion)
+	}
+
+	// If no role specified, use champion's default role
+	if role == "" {
+		if defaultRole, exists := championDefaultRoles[champKey]; exists {
+			role = defaultRole
+		}
 	}
 
 	// U.GG overview API contains rune data
@@ -873,8 +881,8 @@ var itemNames = map[int]string{
 	1036: "长剑", 1039: "冰雹刀刃", 1040: "黑曜石锋刃", 1052: "增幅典籍",
 	1053: "吸血鬼节杖", 1054: "多兰之盾", 1055: "多兰之刃", 1056: "多兰之戒",
 	1057: "负极斗篷", 1058: "无用大棒", 1082: "黑暗封印", 1083: "萃取",
-	1101: "冰雹刀刃", 1102: "灰烬小刀", 1103: "踏苔蜥幼苗",
-	1105: "踏苔蜥幼苗", 1106: "风行狐幼体", 1107: "焰爪猫幼崽", 2003: "生命药水",
+	1103: "踏苔蜥幼苗", 1105: "踏苔蜥幼苗", 1106: "风行狐幼体", 1107: "焰爪猫幼崽",
+	2003: "生命药水",
 	2031: "腐蚀药水", 2033: "复用型药水", 2055: "控制守卫",
 	// Basic items
 	1001: "鞋子", 1004: "仙女护符", 1006: "治疗宝珠", 1011: "巨人腰带",
